@@ -1,0 +1,65 @@
+export interface NIMModel {
+  id: string
+  name: string
+}
+
+export interface NIMApiResponse {
+  data: NIMModel[]
+}
+
+export interface OpenCodeConfig {
+  $schema?: string
+  provider?: {
+    nim?: {
+      npm?: string
+      name?: string
+      options?: {
+        baseURL?: string
+      }
+      models?: Record<string, { name: string; options?: Record<string, unknown> }>
+    }
+  }
+  model?: string
+  small_model?: string
+  [key: string]: unknown
+}
+
+export interface CacheData {
+  lastRefresh: number
+  modelsHash: string
+  lastError?: string
+  baseURL?: string
+}
+
+export interface PluginAPI {
+  config: {
+    get: <T = unknown>(key?: string) => T
+    set: (key: string, value: unknown) => Promise<void>
+  }
+  tui: {
+    toast: {
+      show: (options: {
+        title: string
+        description?: string
+        variant?: 'default' | 'destructive' | 'success' | 'error'
+      }) => void
+    }
+  }
+  command: {
+    register: (name: string, handler: () => Promise<void> | void, options?: { description: string }) => void
+    execute: (name: string) => Promise<void>
+  }
+  client?: {
+    app: {
+      log: (log: { body: { service: string; level: 'debug' | 'info' | 'warn' | 'error'; message: string; extra?: Record<string, unknown> } }) => Promise<void>
+    }
+  }
+}
+
+export type Plugin = (api: PluginAPI) => Promise<{
+  init?: () => Promise<void>
+  [key: string]: unknown
+}> | {
+  init?: () => Promise<void>
+  [key: string]: unknown
+}
