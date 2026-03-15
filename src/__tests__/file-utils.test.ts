@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs/promises'
+import type { MockFileHandle } from './mocks.js'
 import {
   readJSONC,
   writeJSONC,
@@ -80,6 +81,49 @@ describe('File Utils', () => {
       expect(fs.mkdir).toHaveBeenCalled()
     })
 
+    it('cleans up old backups beyond MAX_BACKUPS threshold', async () => {
+      const now = Date.now()
+      const mockFiles = Array.from({ length: 10 }, (_, i) => 
+        `file.txt.${now - i * 1000}.bak`
+      )
+      
+      vi.mocked(fs.readdir).mockResolvedValue(mockFiles as any)
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined)
+      vi.mocked(fs.rename).mockResolvedValue(undefined)
+      vi.mocked(fs.access).mockResolvedValue(undefined)
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined)
+      vi.mocked(fs.unlink).mockResolvedValue(undefined)
+      
+      await atomicWrite('/test/file.txt', 'content', { 
+        backup: true, 
+        createBackupDir: true 
+      })
+      
+      // Should delete 5 oldest backups (10 total - 5 MAX_BACKUPS)
+      // +1 for the temp file cleanup call = 6 total unlink calls
+      const unlinkCalls = vi.mocked(fs.unlink).mock.calls
+      const backupDeletions = unlinkCalls.filter(call => 
+        String(call[0]).includes('.bak')
+      )
+      expect(backupDeletions.length).toBe(5)
+    })
+
+    it('handles backup cleanup failures gracefully', async () => {
+      vi.mocked(fs.readdir).mockRejectedValue(new Error('Directory read failed'))
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined)
+      vi.mocked(fs.rename).mockResolvedValue(undefined)
+      vi.mocked(fs.access).mockResolvedValue(undefined)
+      vi.mocked(fs.copyFile).mockResolvedValue(undefined)
+      
+      // Should not throw even if cleanup fails
+      await expect(atomicWrite('/test/file.txt', 'content', { 
+        backup: true, 
+        createBackupDir: true 
+      })).resolves.toBeUndefined()
+    })
+
     it('cleans up temp file on error', async () => {
       vi.mocked(fs.mkdir).mockResolvedValue(undefined)
       vi.mocked(fs.writeFile).mockRejectedValue(new Error('Write failed'))
@@ -115,25 +159,68 @@ describe('File Utils', () => {
   })
 
   describe('getConfigDir', () => {
-    it('returns config directory path', () => {
+    it('returns Windows config path on Windows', () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+      
+      const dir = getConfigDir()
+      expect(dir).toContain('AppData')
+      expect(dir).toContain('Roaming')
+      expect(dir).toContain('opencode')
+      
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    })
+
+    it('returns Unix config path on Linux/macOS', () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+      
       const dir = getConfigDir()
       expect(dir).toContain('.config')
       expect(dir).toContain('opencode')
+      
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
     })
   })
 
   describe('getCacheDir', () => {
-    it('returns cache directory path', () => {
+    it('returns Windows cache path on Windows', () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+      
+      const dir = getCacheDir()
+      expect(dir).toContain('AppData')
+      expect(dir).toContain('Local')
+      expect(dir).toContain('opencode')
+      expect(dir).toContain('cache')
+      
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    })
+
+    it('returns Unix cache path on Linux/macOS', () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+      
       const dir = getCacheDir()
       expect(dir).toContain('.cache')
       expect(dir).toContain('opencode')
+      
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
     })
   })
 
-  describe('acquireLock', () => {
+describe('acquireLock', () => {
+    beforeEach(() => {
+      // Suppress expected console.error output in lock tests
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
     it('acquires lock successfully', async () => {
-      const mockFd = { close: vi.fn().mockResolvedValue(undefined) }
-      vi.mocked(fs.open).mockResolvedValue(mockFd as any)
+      const mockFd: MockFileHandle = {
+        close: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn().mockResolvedValue(undefined)
+      }
+      vi.mocked(fs.open).mockResolvedValue(mockFd as never)
       vi.mocked(fs.mkdir).mockResolvedValue(undefined)
       vi.mocked(fs.unlink).mockResolvedValue(undefined)
 
@@ -146,13 +233,16 @@ describe('File Utils', () => {
     })
 
     it('retries on EEXIST and eventually succeeds', async () => {
-      const mockFd = { close: vi.fn().mockResolvedValue(undefined) }
+      const mockFd: MockFileHandle = {
+        close: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn().mockResolvedValue(undefined)
+      }
       const error = new Error('Lock exists') as NodeJS.ErrnoException
       error.code = 'EEXIST'
-      
+
       vi.mocked(fs.open)
         .mockRejectedValueOnce(error)
-        .mockResolvedValueOnce(mockFd as any)
+        .mockResolvedValueOnce(mockFd as never)
       vi.mocked(fs.mkdir).mockResolvedValue(undefined)
       vi.mocked(fs.unlink).mockResolvedValue(undefined)
 

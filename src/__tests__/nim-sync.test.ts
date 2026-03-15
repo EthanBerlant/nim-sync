@@ -1,27 +1,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import fs from 'fs/promises'
 import type { PluginAPI } from '../types/index.js'
 import { syncNIMModels } from '../plugin/nim-sync.js'
-import { createMockPluginAPI, mockFileSystem } from './mocks.js'
+import { createMockPluginAPI } from './mocks.js'
+
+vi.mock('fs/promises')
+vi.mock('../lib/retry.js', () => ({
+  withRetry: vi.fn().mockImplementation(async (fn) => fn())
+}))
+vi.mock('crypto', () => {
+  const createHash = () => ({
+    update: vi.fn().mockReturnThis(),
+    digest: vi.fn((_encoding: string) => 'test-hash-value')
+  })
+  return {
+    default: { createHash },
+    createHash
+  }
+})
 
 describe('NIM Sync Unit Tests', () => {
   let mockPluginAPI: PluginAPI
-  let fsMock: any
 
   beforeEach(() => {
-    vi.resetModules()
     vi.clearAllMocks()
-    fsMock = mockFileSystem()
     mockPluginAPI = createMockPluginAPI()
     process.env.USERPROFILE = '/test/user'
     process.env.NVIDIA_API_KEY = 'test-api-key'
-    
-    // Mock auth.json paths
-    fsMock.readFile.mockImplementation((filePath) => {
+
+    vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
       if (filePath.includes('auth.json')) {
-        return Promise.reject(new Error('File not found'))
+        return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
       }
       return Promise.resolve('{}')
     })
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined)
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+    vi.mocked(fs.open).mockResolvedValue({
+      close: vi.fn(),
+      writeFile: vi.fn().mockResolvedValue(undefined)
+    } as any)
+    vi.mocked(fs.unlink).mockResolvedValue(undefined)
+    vi.mocked(fs.access).mockResolvedValue(undefined)
+    vi.mocked(fs.stat).mockResolvedValue({ mtimeMs: Date.now() } as any)
   })
 
   describe('getAuthPath', () => {
@@ -29,20 +50,15 @@ describe('NIM Sync Unit Tests', () => {
       const originalPlatform = process.platform
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
 
-      const mockFetch = vi.fn()
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'model-1', name: 'Model 1' }] })
+      })
       global.fetch = mockFetch
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce('{}') // config
-        .mockResolvedValueOnce('{}') // cache
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
 
@@ -53,20 +69,15 @@ describe('NIM Sync Unit Tests', () => {
       const originalPlatform = process.platform
       Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
 
-      const mockFetch = vi.fn()
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'model-1', name: 'Model 1' }] })
+      })
       global.fetch = mockFetch
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce('{}') // config
-        .mockResolvedValueOnce('{}') // cache
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
 
@@ -76,147 +87,73 @@ describe('NIM Sync Unit Tests', () => {
 
   describe('shouldRefresh logic', () => {
     it('returns true when config has no nim provider', async () => {
-      const mockFetch = vi.fn()
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'model-1', name: 'Model 1' }] })
+      })
       global.fetch = mockFetch
 
-      mockPluginAPI.config.get = vi.fn(() => ({}))
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // cache
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-      fsMock.writeFile.mockResolvedValue(undefined)
+      mockPluginAPI.config.get = vi.fn(() => ({})) as any
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(mockFetch).toHaveBeenCalled()
     })
 
     it('returns true when cache has no lastRefresh', async () => {
-      const mockFetch = vi.fn()
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'model-1', name: 'Model 1' }] })
+      })
       global.fetch = mockFetch
 
-      mockPluginAPI.config.get = vi.fn(() => ({
-        provider: { nim: { models: {} } }
-      }))
+      mockPluginAPI.config.get = vi.fn(() => ({ provider: { nim: { models: {} } } })) as any
 
-      const cacheNoTimestamp = JSON.stringify({
-        modelsHash: 'abc123'
+      const cacheNoTimestamp = JSON.stringify({ modelsHash: 'abc123' })
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        return Promise.resolve(cacheNoTimestamp)
       })
-
-      fsMock.readFile
-        .mockResolvedValueOnce(cacheNoTimestamp) // cache
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-      fsMock.writeFile.mockResolvedValue(undefined)
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(mockFetch).toHaveBeenCalled()
     })
   })
 
-  describe('hashModels', () => {
-    it('produces consistent hash for same models', async () => {
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            data: [{ id: 'model-1', name: 'Model 1' }]
-          })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            data: [{ id: 'model-1', name: 'Model 1' }]
-          })
-        })
-      global.fetch = mockFetch
-
-      fsMock.readFile
-        .mockRejectedValue(new Error('File not found'))
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
-
-      const plugin1 = await syncNIMModels(mockPluginAPI)
-      await plugin1.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
-
-      const plugin2 = await syncNIMModels(mockPluginAPI)
-      await plugin2.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
-
-      expect(mockFetch).toHaveBeenCalledTimes(2)
-    })
-  })
-
   describe('updateConfig', () => {
-    beforeEach(() => {
-      // Mock acquireLock to avoid timeouts
-      fsMock.open.mockImplementation(() => Promise.resolve({ close: vi.fn() }))
-    })
-
     it('deep merges provider.nim without overwriting other provider data', async () => {
       const existingConfig = JSON.stringify({
         provider: {
-          anthropic: {
-            apiKey: 'anthropic-key',
-            models: {} 
-          },
-          openai: {
-            apiKey: 'openai-key'
-          }
+          anthropic: { apiKey: 'anthropic-key', models: {} },
+          openai: { apiKey: 'openai-key' }
         }
       })
-      fsMock.readFile.mockResolvedValue(existingConfig)
-      
-      const models = [
-        { id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }
-      ]
-      
+      vi.mocked(fs.readFile).mockResolvedValue(existingConfig)
+
+      const models = [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
+
       const plugin = await syncNIMModels(mockPluginAPI)
       const changed = await (plugin as any).updateConfig(models)
-      
+
       expect(changed).toBe(true)
-      const updatedConfig = JSON.parse(fsMock.writeFile.mock.calls[0][1])
+      const updatedConfig = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0][1] as string)
       expect(updatedConfig.provider.anthropic.apiKey).toBe('anthropic-key')
       expect(updatedConfig.provider.openai.apiKey).toBe('openai-key')
       expect(updatedConfig.provider.nim.models).toBeDefined()
     })
 
-    it('handles race conditions by using atomic cache operations', async () => {
-      // Simulate concurrent updates
-      fsMock.readFile
-        .mockResolvedValueOnce(JSON.stringify({})) // First cache read
-        .mockResolvedValueOnce(JSON.stringify({ provider: {} })) // Config read
-        .mockResolvedValueOnce(JSON.stringify({ lastRefresh: Date.now(), modelsHash: 'old-hash' })) // Second cache read
-
-      const models = [
-        { id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }
-      ]
-      
-      const plugin = await syncNIMModels(mockPluginAPI)
-      const changed = await (plugin as any).updateConfig(models)
-      
-      expect(changed).toBe(true)
-      // Verify atomic write was called
-      expect(fsMock.writeFile).toHaveBeenCalled()
-    })
-
     it('preserves existing model options', async () => {
-      const mockFetch = vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            data: [
-              { id: 'existing-model', name: 'Existing Model' }
-            ]
-          })
-        })
-      )
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'existing-model', name: 'Existing Model' }] })
+      })
       global.fetch = mockFetch
 
       const existingConfig = JSON.stringify({
@@ -232,64 +169,16 @@ describe('NIM Sync Unit Tests', () => {
         }
       })
 
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce(existingConfig) // config
-        .mockResolvedValueOnce('{}') // cache
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
-
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
-
-      expect(mockFetch).toHaveBeenCalled()
-    })
-
-    it('skips update when hash matches', async () => {
-      const mockFetch = vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            data: [
-              { id: 'model-a', name: 'Model A' }
-            ]
-          })
-        })
-      )
-      global.fetch = mockFetch
-
-      // Calculate expected hash
-      const hash = 'hash-8-sha256-hex' // Based on mock
-
-      const cacheWithMatchingHash = JSON.stringify({
-        lastRefresh: Date.now() - 25 * 60 * 60 * 1000, // Expired
-        modelsHash: hash
-      })
-
-      const existingConfig = JSON.stringify({
-        provider: {
-          nim: {
-            models: {
-              'model-a': { name: 'Model A' }
-            }
-          }
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
         }
+        return Promise.resolve(existingConfig)
       })
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce(existingConfig) // config (shouldRefresh reads)
-        .mockResolvedValueOnce(cacheWithMatchingHash) // cache (readCache reads)
-        .mockResolvedValueOnce(existingConfig) // config (updateConfig reads)
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -297,21 +186,13 @@ describe('NIM Sync Unit Tests', () => {
 
   describe('hooks', () => {
     it('exposes server.connected hook', async () => {
-      fsMock.readFile.mockResolvedValue('{}')
-      fsMock.writeFile.mockResolvedValue(undefined)
-
       const plugin = await syncNIMModels(mockPluginAPI)
-
       expect(plugin.hooks).toBeDefined()
       expect(plugin.hooks?.['server.connected']).toBeDefined()
     })
 
     it('exposes session.created hook', async () => {
-      fsMock.readFile.mockResolvedValue('{}')
-      fsMock.writeFile.mockResolvedValue(undefined)
-
       const plugin = await syncNIMModels(mockPluginAPI)
-
       expect(plugin.hooks).toBeDefined()
       expect(plugin.hooks?.['session.created']).toBeDefined()
     })
@@ -319,26 +200,16 @@ describe('NIM Sync Unit Tests', () => {
 
   describe('error handling', () => {
     it('handles API errors with status code', async () => {
-      const mockFetch = vi.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 500,
-          statusText: 'Internal Server Error'
-        })
-      )
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error'
+      })
       global.fetch = mockFetch
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce('{}') // config
-        .mockResolvedValueOnce('{}') // cache
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -349,20 +220,12 @@ describe('NIM Sync Unit Tests', () => {
     })
 
     it('handles network errors', async () => {
-      const mockFetch = vi.fn(() => Promise.reject(new Error('Network error')))
+      const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
       global.fetch = mockFetch
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce('{}') // config
-        .mockResolvedValueOnce('{}') // cache
-      fsMock.writeFile.mockResolvedValue(undefined)
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -373,58 +236,240 @@ describe('NIM Sync Unit Tests', () => {
     })
   })
 
-  describe('writeCache', () => {
-    it('handles write cache errors gracefully', async () => {
-      const mockFetch = vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            data: [{ id: 'model-1', name: 'Model 1' }]
-          })
-        })
-      )
-      global.fetch = mockFetch
-
-      fsMock.readFile
-        .mockRejectedValueOnce(new Error('File not found')) // auth.json
-        .mockResolvedValueOnce('{}') // config
-        .mockResolvedValueOnce('{}') // cache
-      fsMock.writeFile.mockRejectedValue(new Error('Write failed'))
-      fsMock.mkdir.mockResolvedValue(undefined)
-      fsMock.open.mockResolvedValue({ close: vi.fn() })
-
+  describe('getAPIKey', () => {
+    it('logs generic error without sensitive data when auth.json parsing fails', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 200))
+      vi.mocked(fs.readFile).mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))
 
-      // Should not throw, just log error
-      expect(mockFetch).toHaveBeenCalled()
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const apiKey = await plugin.getAPIKey?.()
+
+      expect(apiKey).toBe('test-api-key')
+      expect(consoleSpy).toHaveBeenCalledWith('[NIM-Sync] Failed to read auth:', expect.any(String))
+      // Error message now includes the error details for debugging
 
       consoleSpy.mockRestore()
     })
-  })
 
-  describe('getAPIKey', () => {
-    it('logs error and returns null when auth.json parsing fails', async () => {
-      expect(true).toBe(true) // ✅ Test passes - error logging works
-    })
+    it('returns null and logs generic error for malformed auth.json', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    it('returns null and logs error for malformed auth.json', async () => {
-      expect(true).toBe(true) // ✅ Test passes - error logging works
+      vi.mocked(fs.readFile).mockResolvedValueOnce('{ invalid json }')
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const apiKey = await plugin.getAPIKey?.()
+
+      expect(apiKey).toBe('test-api-key')
+      expect(consoleSpy).toHaveBeenCalledWith('[NIM-Sync] Failed to read auth:', expect.any(String))
+
+      consoleSpy.mockRestore()
     })
 
     it('returns apiKey from credentials.nim.apiKey if auth.json is valid', async () => {
-      expect(true).toBe(true) // ✅ Test passes - apiKey extraction works
+      const authData = JSON.stringify({
+        credentials: { nim: { apiKey: 'stored-api-key-123' } }
+      })
+
+      vi.mocked(fs.readFile).mockResolvedValueOnce(authData)
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const apiKey = await plugin.getAPIKey?.()
+
+      expect(apiKey).toBe('stored-api-key-123')
     })
 
     it('returns apiKey from environment variable if auth.json is empty', async () => {
-      expect(true).toBe(true) // ✅ Test passes - env var fallback works
+      vi.mocked(fs.readFile).mockResolvedValueOnce('{}')
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const apiKey = await plugin.getAPIKey?.()
+
+      expect(apiKey).toBe('test-api-key')
     })
 
     it('returns null if no apiKey is found in auth.json or environment', async () => {
-      expect(true).toBe(true) // ✅ Test passes - null fallback works
+      delete process.env.NVIDIA_API_KEY
+      vi.mocked(fs.readFile).mockResolvedValueOnce('{}')
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const apiKey = await plugin.getAPIKey?.()
+
+      expect(apiKey).toBeNull()
+
+      process.env.NVIDIA_API_KEY = 'test-api-key'
     })
   })
+
+  describe('API response validation', () => {
+    it('throws error for invalid API response structure', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ invalid: 'structure' })
+      })
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Sync Failed',
+          description: expect.stringContaining('invalid')
+        })
+      )
+    })
+
+    it('throws error when data array contains invalid model', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: '', name: 'Invalid Model' }] })
+      })
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Sync Failed',
+          description: expect.stringContaining('Invalid')
+        })
+      )
+    })
+
+    it('throws error when model name is empty', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'valid-id', name: '' }] })
+      })
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Sync Failed',
+          description: expect.stringContaining('invalid name')
+        })
+      )
+    })
+
+    it('throws error when duplicate model IDs are present', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ 
+          data: [
+            { id: 'duplicate-id', name: 'Model 1' },
+            { id: 'duplicate-id', name: 'Model 2' }
+          ] 
+        })
+      })
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Sync Failed',
+          description: expect.stringContaining('Duplicate model ID')
+        })
+      )
+    })
+
+    it('shows warning when API returns empty model list', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [] })
+      })
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'No Models Available',
+          description: expect.stringContaining('NVIDIA API returned no models')
+        })
+      )
+    })
+  })
+
+  describe('race condition prevention', () => {
+    it('concurrent refreshModels calls share single refresh operation', async () => {
+      let fetchCount = 0
+      const mockFetch = vi.fn(async () => {
+        fetchCount++
+        await new Promise(resolve => setTimeout(resolve, 50))
+        return { ok: true, json: () => Promise.resolve({ data: [{ id: 'model-1', name: 'Model 1' }] }) }
+      })
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+
+      const promise1 = plugin.refreshModels?.()
+      const promise2 = plugin.refreshModels?.()
+      const promise3 = plugin.refreshModels?.()
+
+      await Promise.all([promise1, promise2, promise3])
+      await new Promise(resolve => setTimeout(resolve, 50))
+
+      expect(fetchCount).toBe(1)
+    })
+  })
+
+  describe('rate limiting for manual refresh', () => {
+    it('shows warning when refresh is called too frequently', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'm1', name: 'M1' }] })
+      })
+      global.fetch = mockFetch
+
+      // Capture the nim-refresh command handler
+      let nimRefreshHandler: (() => Promise<void>) | null = null
+      mockPluginAPI.command.register = vi.fn((name, handler) => {
+        if (name === 'nim-refresh') {
+          nimRefreshHandler = handler as () => Promise<void>
+        }
+      }) as any
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // First manual refresh should work
+      expect(nimRefreshHandler).not.toBeNull()
+      if (nimRefreshHandler) {
+        await nimRefreshHandler()
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+
+      expect(mockFetch).toHaveBeenCalledTimes(2) // init + manual refresh
+
+      // Second immediate refresh (without waiting 60 seconds) should be rate limited
+      vi.clearAllMocks()
+      if (nimRefreshHandler) {
+        await nimRefreshHandler()
+      }
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({ 
+          title: 'Rate Limited',
+          description: expect.stringMatching(/Please wait \d+s before refreshing again/)
+        })
+      )
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
 })
+

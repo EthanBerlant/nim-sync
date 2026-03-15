@@ -1,10 +1,26 @@
 export interface NIMModel {
   id: string
   name: string
+  description?: string
+  model_type?: string
+  quantization?: string
 }
 
 export interface NIMApiResponse {
   data: NIMModel[]
+}
+
+export interface AuthConfig {
+  credentials?: {
+    nim?: {
+      apiKey?: string
+    }
+  }
+}
+
+export interface LockMetadata {
+  pid: number
+  timestamp: number
 }
 
 export interface OpenCodeConfig {
@@ -62,4 +78,26 @@ export type Plugin = (api: PluginAPI) => Promise<{
 }> | {
   init?: () => Promise<void>
   [key: string]: unknown
+}
+
+/**
+ * Custom error for NVIDIA API failures.
+ */
+export class NVIDIAApiError extends Error {
+  constructor(
+    public statusCode: number,
+    public statusText: string
+  ) {
+    super(`NVIDIA API error: ${statusCode} ${statusText}`)
+    this.name = 'NVIDIAApiError'
+  }
+}
+
+/**
+ * Platform-specific directory paths for OpenCode.
+ */
+export interface PlatformPaths {
+  config: string
+  data: string
+  cache: string
 }
