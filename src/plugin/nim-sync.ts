@@ -54,11 +54,18 @@ const ALLOWED_MODEL_PROPERTIES = new Set([
  * - Prevents concurrent refreshes with in-memory flag
  */
 export async function syncNIMModels(api: PluginAPI): Promise<{
+  /** Initialize plugin and register commands */
   init?: () => Promise<void>
+  /** Hook handlers for server and session events */
   hooks?: Record<string, () => Promise<void>>
+  /** Get NVIDIA API key from auth config or environment */
   getAPIKey?: () => Promise<string | null>
+  /** Update OpenCode configuration with new models */
   updateConfig?: (models: NIMModel[]) => Promise<boolean>
+  /** Refresh models from NVIDIA API */
   refreshModels?: (force?: boolean) => Promise<void>
+  /** Check if model refresh is needed based on cache TTL */
+  shouldRefresh?: () => Promise<boolean>
 }> {
   let refreshInProgress = false
   let lastManualRefresh = 0
@@ -194,6 +201,7 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
     } catch { return true }
   }
 
+  const exposedShouldRefresh = shouldRefresh
   const updateConfig = async (models: NIMModel[]): Promise<boolean> => {
     let config: OpenCodeConfig | null = null
     try { config = await readJSONC<OpenCodeConfig>(getConfigPath()) } catch { /* will create new */ }
@@ -276,7 +284,8 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
     'session.created': async () => { try { await refreshModels() } catch (e) { console.error('[NIM-Sync] Hook failed:', e) } }
   }
 
-  return { init, hooks, getAPIKey: exposedGetAPIKey, updateConfig: exposedUpdateConfig, refreshModels }
+  const exposedRefreshModels = refreshModels
+  return { init, hooks, getAPIKey: exposedGetAPIKey, updateConfig: exposedUpdateConfig, refreshModels: exposedRefreshModels, shouldRefresh: exposedShouldRefresh }
 }
 
 export default syncNIMModels

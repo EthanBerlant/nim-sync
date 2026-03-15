@@ -43,6 +43,28 @@ describe('File Utils', () => {
 
       await expect(readJSONC('/test/file.json')).rejects.toThrow('Permission denied')
     })
+
+    it('throws error when validation callback returns false', async () => {
+      const mockContent = '{ "key": "value" }'
+      vi.mocked(fs.readFile).mockResolvedValue(mockContent)
+
+      // Validation function that always fails
+      const failingValidator = (_data: unknown): _data is { required: string } => false
+
+      await expect(readJSONC('/test/file.json', failingValidator))
+        .rejects.toThrow('Invalid data structure in /test/file.json')
+    })
+
+    it('passes when validation callback returns true', async () => {
+      const mockContent = '{ "key": "value" }'
+      vi.mocked(fs.readFile).mockResolvedValue(mockContent)
+
+      // Validation function that always passes
+      const passingValidator = (_data: unknown): _data is { key: string } => true
+
+      const result = await readJSONC('/test/file.json', passingValidator)
+      expect(result).toEqual({ key: 'value' })
+    })
   })
 
   describe('writeJSONC', () => {
@@ -122,6 +144,44 @@ describe('File Utils', () => {
         backup: true, 
         createBackupDir: true 
       })).resolves.toBeUndefined()
+    })
+
+    it('throws error when backup creation fails with non-ENOENT error', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+      vi.mocked(fs.access).mockResolvedValue(undefined)
+      
+      // copyFile fails with permission error (not ENOENT)
+      vi.mocked(fs.copyFile).mockRejectedValue(new Error('Permission denied'))
+      
+      await expect(atomicWrite('/test/file.txt', 'content', { 
+        backup: true, 
+        createBackupDir: true 
+      })).rejects.toThrow('Failed to create backup: Permission denied')
+    })
+
+    it('ignores ENOENT when original file does not exist for backup', async () => {
+      const error = new Error('No such file') as NodeJS.ErrnoException
+      error.code = 'ENOENT'
+      
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+      vi.mocked(fs.access).mockRejectedValue(error)
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined)
+      vi.mocked(fs.rename).mockResolvedValue(undefined)
+      
+      // Should succeed because ENOENT means file doesn't exist yet (no backup needed)
+      await expect(atomicWrite('/test/file.txt', 'content', { 
+        backup: true, 
+        createBackupDir: true 
+      })).resolves.toBeUndefined()
+    })
+
+    it('silently handles temp file cleanup failures during error recovery', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+      vi.mocked(fs.writeFile).mockRejectedValue(new Error('Disk full'))
+      vi.mocked(fs.unlink).mockRejectedValue(new Error('Cannot unlink'))
+      
+      // Should still throw the original write error, not the unlink error
+      await expect(atomicWrite('/test/file.txt', 'content')).rejects.toThrow('Disk full')
     })
 
     it('cleans up temp file on error', async () => {
