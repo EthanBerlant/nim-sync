@@ -1,6 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
-import { parse as parseJSONC } from 'jsonc-parser'
+import { applyEdits, modify as modifyJSONC, parse as parseJSONC } from 'jsonc-parser'
 import type { LockMetadata, PlatformPaths } from '../types/index.js'
 
 /**
@@ -94,6 +94,44 @@ export async function writeJSONC<T = unknown>(
 ): Promise<void> {
   const content = JSON.stringify(data, null, 2)
   await atomicWrite(filePath, content, options)
+}
+
+/**
+ * Updates a specific path within a JSONC file while preserving unrelated
+ * comments and formatting.
+ *
+ * @param filePath - Path to the JSONC file
+ * @param jsonPath - JSON path to update
+ * @param data - Value to write at the given path
+ * @param options - Optional backup and directory creation settings
+ */
+export async function updateJSONCPath<T = unknown>(
+  filePath: string,
+  jsonPath: Array<string | number>,
+  data: T,
+  options?: AtomicWriteOptions
+): Promise<void> {
+  let existingContent = ''
+
+  try {
+    existingContent = await fs.readFile(filePath, 'utf-8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+  }
+
+  const eol = existingContent.includes('\r\n') ? '\r\n' : '\n'
+  const edits = modifyJSONC(existingContent, jsonPath, data, {
+    formattingOptions: {
+      insertSpaces: true,
+      tabSize: 2,
+      eol
+    }
+  })
+  const updatedContent = applyEdits(existingContent, edits)
+
+  await atomicWrite(filePath, updatedContent, options)
 }
 
 /**

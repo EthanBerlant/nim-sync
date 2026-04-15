@@ -1,7 +1,9 @@
+import path from 'path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs/promises'
 import type { PluginAPI } from '../types/index.js'
 import { syncNIMModels } from '../plugin/nim-sync.js'
+import { getCacheDir, getConfigDir } from '../lib/file-utils.js'
 import { createMockPluginAPI } from './mocks.js'
 
 vi.mock('fs/promises')
@@ -18,6 +20,13 @@ vi.mock('crypto', () => {
     createHash
   }
 })
+
+const flushAsyncWork = async (cycles = 5): Promise<void> => {
+  for (let i = 0; i < cycles; i++) {
+    await Promise.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+  }
+}
 
 describe('NIM Sync Unit Tests', () => {
   let mockPluginAPI: PluginAPI
@@ -58,7 +67,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
 
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
 
@@ -77,7 +86,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
 
@@ -97,7 +106,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -121,7 +130,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -143,7 +152,10 @@ describe('NIM Sync Unit Tests', () => {
       const changed = await (plugin as any).updateConfig(models)
 
       expect(changed).toBe(true)
-      const updatedConfig = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0][1] as string)
+      const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
+        String(filePath).includes('opencode.jsonc')
+      )
+      const updatedConfig = JSON.parse(String(configWrite?.[1]))
       expect(updatedConfig.provider.anthropic.apiKey).toBe('anthropic-key')
       expect(updatedConfig.provider.openai.apiKey).toBe('openai-key')
       expect(updatedConfig.provider.nim.models).toBeDefined()
@@ -178,9 +190,139 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
+    })
+
+    it('preserves existing provider-level nim options', async () => {
+      const existingConfig = JSON.stringify({
+        provider: {
+          nim: {
+            options: {
+              region: 'us-west-2',
+              timeout: 45_000
+            },
+            models: {
+              'existing-model': {
+                name: 'Existing Model'
+              }
+            }
+          }
+        }
+      })
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        return Promise.resolve(existingConfig)
+      })
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const changed = await plugin.updateConfig?.([
+        { id: 'existing-model', name: 'Existing Model' }
+      ])
+
+      expect(changed).toBe(true)
+
+      const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
+        String(filePath).includes('opencode.jsonc')
+      )
+      const updatedConfig = JSON.parse(String(configWrite?.[1]))
+
+      expect(updatedConfig.provider.nim.options.region).toBe('us-west-2')
+      expect(updatedConfig.provider.nim.options.timeout).toBe(45_000)
+      expect(updatedConfig.provider.nim.options.baseURL).toBe('https://integrate.api.nvidia.com/v1')
+    })
+
+    it('preserves existing JSONC comments when updating config', async () => {
+      const existingConfig = `{
+  // keep this top-level comment
+  "provider": {
+    // keep this provider comment
+    "openai": {
+      "apiKey": "openai-key"
+    }
+  },
+  "model": "nim/existing-model"
+}`
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        return Promise.resolve(existingConfig)
+      })
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const changed = await plugin.updateConfig?.([
+        { id: 'existing-model', name: 'Existing Model' }
+      ])
+
+      expect(changed).toBe(true)
+
+      const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
+        String(filePath).includes('opencode.jsonc')
+      )
+      const updatedContent = String(configWrite?.[1])
+
+      expect(updatedContent).toContain('// keep this top-level comment')
+      expect(updatedContent).toContain('// keep this provider comment')
+    })
+
+    it('refreshes the cache timestamp when models are unchanged', async () => {
+      const existingConfig = JSON.stringify({
+        provider: {
+          nim: {
+            models: {
+              'existing-model': {
+                name: 'Existing Model'
+              }
+            }
+          }
+        }
+      })
+
+      const existingCache = JSON.stringify({
+        lastRefresh: Date.now() - 25 * 60 * 60 * 1000,
+        modelsHash: 'test-hash-value'
+      })
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        if (filePath.includes('nim-sync-cache.json')) {
+          return Promise.resolve(existingCache)
+        }
+        return Promise.resolve(existingConfig)
+      })
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      const changed = await plugin.updateConfig?.([
+        { id: 'existing-model', name: 'Existing Model' }
+      ])
+
+      expect(changed).toBe(false)
+
+      const writePaths = vi.mocked(fs.writeFile).mock.calls.map(([filePath]) => String(filePath))
+      expect(writePaths.some(filePath => filePath.includes('nim-sync-cache.json'))).toBe(true)
+      expect(writePaths.some(filePath => filePath.includes('opencode.jsonc'))).toBe(false)
+    })
+
+    it('writes the cache file to the cache directory instead of the config directory', async () => {
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.updateConfig?.([
+        { id: 'model-1', name: 'Model 1' }
+      ])
+
+      const writePaths = vi.mocked(fs.writeFile).mock.calls.map(([filePath]) => String(filePath))
+      const cacheFileBase = path.join(getCacheDir(), 'nim-sync-cache.json')
+      const configFileBase = path.join(getConfigDir(), 'nim-sync-cache.json')
+
+      expect(writePaths.some(filePath => filePath.includes(cacheFileBase))).toBe(true)
+      expect(writePaths.some(filePath => filePath.includes(configFileBase))).toBe(false)
     })
   })
 
@@ -198,6 +340,44 @@ describe('NIM Sync Unit Tests', () => {
     })
   })
 
+  describe('init', () => {
+    it('does not block startup on the initial model refresh', async () => {
+      let resolveFetch: ((value: {
+        ok: true
+        json: () => Promise<{ data: Array<{ id: string; name: string }> }>
+      }) => void) | null = null
+
+      global.fetch = vi.fn(() =>
+        new Promise(resolve => {
+          resolveFetch = resolve
+        }) as Promise<Response>
+      )
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      let initResolved = false
+      const initPromise = plugin.init?.().then(() => {
+        initResolved = true
+      })
+
+      await Promise.resolve()
+
+      expect(initResolved).toBe(true)
+      expect(mockPluginAPI.command.register).toHaveBeenCalledWith(
+        'nim-refresh',
+        expect.any(Function),
+        expect.objectContaining({
+          description: expect.stringContaining('NVIDIA')
+        })
+      )
+
+      resolveFetch?.({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'model-1', name: 'Model 1' }] })
+      })
+      await initPromise
+    })
+  })
+
   describe('error handling', () => {
     it('handles API errors with status code', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
@@ -209,7 +389,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -225,7 +405,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -233,6 +413,40 @@ describe('NIM Sync Unit Tests', () => {
           variant: 'error'
         })
       )
+    })
+
+    it('does not mark a failed refresh as a successful cache refresh', async () => {
+      const existingConfig = JSON.stringify({
+        provider: {
+          nim: {
+            models: {
+              'existing-model': {
+                name: 'Existing Model'
+              }
+            }
+          }
+        }
+      })
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        return Promise.resolve(existingConfig)
+      })
+
+      global.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.refreshModels?.()
+
+      const cacheWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
+        String(filePath).includes('nim-sync-cache.json')
+      )
+      const cachePayload = JSON.parse(String(cacheWrite?.[1]))
+
+      expect(cachePayload.lastRefresh).toBeUndefined()
+      expect(cachePayload.lastError).toContain('Network error')
     })
   })
 
@@ -311,7 +525,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -330,7 +544,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -349,7 +563,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -373,7 +587,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -392,7 +606,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -444,13 +658,12 @@ describe('NIM Sync Unit Tests', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       // First manual refresh should work
       expect(nimRefreshHandler).not.toBeNull()
       if (nimRefreshHandler) {
         await nimRefreshHandler()
-        await new Promise(resolve => setTimeout(resolve, 100))
       }
 
       expect(mockFetch).toHaveBeenCalledTimes(2) // init + manual refresh

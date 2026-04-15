@@ -7,8 +7,10 @@ import { withRetry } from '../lib/retry.js'
 import {
   readJSONC,
   writeJSONC,
+  updateJSONCPath,
   acquireLock,
   getConfigDir,
+  getCacheDir,
   getDataDir,
   API_TIMEOUT_MS,
   CACHE_TTL_MS,
@@ -79,7 +81,7 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
     return msg.replace(apiKey, '[REDACTED]')
   }
 
-  const getCachePath = (): string => path.join(getConfigDir(), CACHE_FILE_NAME)
+  const getCachePath = (): string => path.join(getCacheDir(), CACHE_FILE_NAME)
   const getConfigPath = (): string => path.join(getConfigDir(), CONFIG_FILE_NAME)
   const getAuthPath = (): string => path.join(getDataDir(), 'auth.json')
 
@@ -204,14 +206,37 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
   const exposedShouldRefresh = shouldRefresh
   const updateConfig = async (models: NIMModel[]): Promise<boolean> => {
     let config: OpenCodeConfig | null = null
-    try { config = await readJSONC<OpenCodeConfig>(getConfigPath()) } catch { /* will create new */ }
+    let canPatchConfigInPlace = true
+
+    try { config = await readJSONC<OpenCodeConfig>(getConfigPath()) } catch {
+      config = null
+      canPatchConfigInPlace = false
+    }
+
     const newModels = models.reduce((acc, m) => {
       acc[m.id] = { name: m.name, options: config?.provider?.nim?.models?.[m.id]?.options || {} }
       return acc
     }, {} as Record<string, { name: string; options: Record<string, unknown> }>)
     const modelsHash = hashModels(models)
     const cache = await readCache()
-    if (cache?.modelsHash === modelsHash) return false
+    if (cache?.modelsHash === modelsHash) {
+      try {
+        await writeCache({ ...cache, lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL })
+      } catch { /* non-fatal */ }
+      return false
+    }
+
+    const updatedNIMConfig: NonNullable<OpenCodeConfig['provider']>['nim'] = {
+      ...config?.provider?.nim,
+      npm: '@ai-sdk/openai-compatible',
+      name: 'NVIDIA NIM',
+      options: {
+        ...config?.provider?.nim?.options,
+        baseURL: NIM_BASE_URL
+      },
+      models: newModels
+    }
+
     let releaseLockFn: (() => Promise<void>) | null = null
     try { releaseLockFn = await acquireLock('nim-config-update') } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unknown'
@@ -222,13 +247,17 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
     try {
       const updatedConfig: OpenCodeConfig = {
         ...(config || {}),
-        provider: { ...config?.provider, nim: { ...config?.provider?.nim, npm: '@ai-sdk/openai-compatible', name: 'NVIDIA NIM', options: { baseURL: NIM_BASE_URL }, models: newModels } }
+        provider: { ...config?.provider, nim: updatedNIMConfig }
       }
       const validation = validateOpenCodeConfig(updatedConfig)
       if (!validation.valid) {
         console.warn('[NIM-Sync] Config validation warnings:', validation.errors)
       }
-      await writeJSONC(getConfigPath(), updatedConfig, { backup: true, createBackupDir: true })
+      if (canPatchConfigInPlace) {
+        await updateJSONCPath(getConfigPath(), ['provider', 'nim'], updatedNIMConfig, { backup: true, createBackupDir: true })
+      } else {
+        await writeJSONC(getConfigPath(), updatedConfig, { backup: true, createBackupDir: true })
+      }
       try { await writeCache({ lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL }) } catch { /* non-fatal */ }
       return true
     } catch (e) {
@@ -259,12 +288,11 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
       const msg = sanitizeErrorMessage(error instanceof Error ? error.message : 'Unknown error', apiKey)
       console.error('[NIM-Sync] Model refresh failed:', msg)
       safeShowToast({ title: 'NVIDIA Sync Failed', description: msg, variant: 'error' })
-      try { await writeCache({ lastRefresh: Date.now(), modelsHash: '', lastError: msg }) } catch { /* ignore */ }
+      try { await writeCache({ modelsHash: '', lastError: msg, baseURL: NIM_BASE_URL }) } catch { /* ignore */ }
     } finally { refreshInProgress = false }
   }
 
   const init = async (): Promise<void> => {
-    try { await refreshModels() } catch (e) { console.error('[NIM-Sync] Init failed:', e) }
     try {
       api.command.register('nim-refresh', async () => {
         const now = Date.now()
@@ -277,6 +305,7 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
         await refreshModels(true)
       }, { description: 'Force refresh NVIDIA NIM models' })
     } catch (e) { console.error('[NIM-Sync] Failed to register command:', e) }
+    void refreshModels().catch((e) => { console.error('[NIM-Sync] Init failed:', e) })
   }
 
   const hooks = {

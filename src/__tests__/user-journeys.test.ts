@@ -19,6 +19,13 @@ vi.mock('crypto', () => {
   }
 })
 
+const flushAsyncWork = async (cycles = 5): Promise<void> => {
+  for (let i = 0; i < cycles; i++) {
+    await Promise.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+  }
+}
+
 describe('User Journey: NVIDIA NIM Model Synchronization', () => {
   let mockPluginAPI: PluginAPI
 
@@ -67,7 +74,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalledWith(
         'https://integrate.api.nvidia.com/v1/models',
@@ -93,7 +100,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -131,7 +138,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -147,7 +154,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -171,7 +178,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -212,11 +219,10 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
 
       vi.clearAllMocks()
       await refreshHandler()
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       expect(mockFetch).toHaveBeenCalled()
     }, 10000)
@@ -252,7 +258,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).not.toHaveBeenCalled()
     })
@@ -279,7 +285,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -314,7 +320,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })
@@ -350,13 +356,13 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin1 = await syncNIMModels(mockPluginAPI)
       await plugin1.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalledTimes(1)
 
       const plugin2 = await syncNIMModels(mockPluginAPI)
       await plugin2.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalledTimes(2)
     })
@@ -379,7 +385,7 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await flushAsyncWork()
 
       expect(mockFetch).toHaveBeenCalled()
     })

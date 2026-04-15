@@ -41,7 +41,7 @@ export interface OpenCodeConfig {
 }
 
 export interface CacheData {
-  lastRefresh: number
+  lastRefresh?: number
   modelsHash: string
   lastError?: string
   baseURL?: string

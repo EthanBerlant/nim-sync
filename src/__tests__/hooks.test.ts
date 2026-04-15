@@ -57,15 +57,9 @@ describe('Hook Execution Tests', () => {
       global.fetch = mockFetch
 
       const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Clear initial fetch
-      vi.clearAllMocks()
 
       // Execute server.connected hook
       await plugin.hooks?.['server.connected']()
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Should trigger another refresh
       expect(mockFetch).toHaveBeenCalled()
@@ -101,15 +95,9 @@ describe('Hook Execution Tests', () => {
       })
 
       const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Clear initial (skipped) state
-      vi.clearAllMocks()
 
       // Execute server.connected hook
       await plugin.hooks?.['server.connected']()
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Should not fetch because cache is fresh
       expect(mockFetch).not.toHaveBeenCalled()
@@ -127,15 +115,9 @@ describe('Hook Execution Tests', () => {
       global.fetch = mockFetch
 
       const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Clear initial fetch
-      vi.clearAllMocks()
 
       // Execute session.created hook
       await plugin.hooks?.['session.created']()
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Should trigger another refresh
       expect(mockFetch).toHaveBeenCalled()
@@ -146,11 +128,6 @@ describe('Hook Execution Tests', () => {
       global.fetch = mockFetch
 
       const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Clear initial error
-      vi.clearAllMocks()
 
       // Execute session.created hook - should not throw
       await expect(plugin.hooks?.['session.created']()).resolves.toBeUndefined()
@@ -181,19 +158,12 @@ describe('Hook Execution Tests', () => {
       global.fetch = mockFetch
 
       const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Reset counter after init
-      fetchCount = 0
-      vi.clearAllMocks()
 
       // Fire both hooks simultaneously
       const hook1 = plugin.hooks?.['server.connected']()
       const hook2 = plugin.hooks?.['session.created']()
 
       await Promise.all([hook1, hook2])
-      await new Promise(resolve => setTimeout(resolve, 100))
 
       // Should only fetch once due to deduplication
       expect(fetchCount).toBe(1)
