@@ -15,6 +15,10 @@ describe('official TUI plugin', () => {
     manualRefresh.mockReset()
   })
 
+  it('exposes a stable plugin id', () => {
+    expect(plugin.id).toBe('nim-sync')
+  })
+
   it('registers /nim-refresh as a slash command for autocomplete', async () => {
     let commandFactory: (() => Array<Record<string, unknown>>) | undefined
 

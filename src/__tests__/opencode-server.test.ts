@@ -15,6 +15,10 @@ describe('official server plugin', () => {
     refreshModels.mockReset()
   })
 
+  it('exposes a stable plugin id', () => {
+    expect(plugin.id).toBe('nim-sync')
+  })
+
   it('refreshes on server and session lifecycle events without migration side effects', async () => {
     const showToast = vi.fn()
     const log = vi.fn()

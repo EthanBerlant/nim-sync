@@ -29,6 +29,7 @@ const tui: TuiPlugin = async (api) => {
 }
 
 const plugin: TuiPluginModule = {
+  id: 'nim-sync',
   tui
 }
 

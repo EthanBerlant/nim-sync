@@ -10,10 +10,12 @@ describe('release automation', () => {
     )
 
     expect(workflow).toContain("tags:\n      - 'v*'")
+    expect(workflow).toContain('workflow_dispatch:')
     expect(workflow).toContain('id-token: write')
     expect(workflow).toContain('npm ci')
     expect(workflow).toContain('npm publish')
     expect(workflow).toContain('verify-release-tag.mjs')
+    expect(workflow).toContain("if: github.event_name == 'push'")
   })
 
   it('documents the steady-state trusted publishing flow', async () => {
@@ -31,6 +33,8 @@ describe('release automation', () => {
     expect(readme).toContain('already published')
     expect(readme).toContain('already configured')
     expect(readme).toContain('npm trust list nim-sync')
+    expect(readme).toContain('Run workflow')
+    expect(readme).toContain('validation-only')
     expect(readme).not.toContain('opencode-nim-sync')
   })
 

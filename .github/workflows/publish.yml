@@ -26,6 +26,7 @@ jobs:
           package-manager-cache: false
 
       - name: Verify release tag matches package version
+        if: github.event_name == 'push'
         run: node scripts/verify-release-tag.mjs
 
       - name: Install dependencies
@@ -44,4 +45,5 @@ jobs:
         run: npm run build
 
       - name: Publish to npm
+        if: github.event_name == 'push'
         run: npm publish --access public

@@ -24,6 +24,7 @@ const server: Plugin = async (input) => {
 }
 
 const plugin: PluginModule = {
+  id: 'nim-sync',
   server
 }
 

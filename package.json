@@ -8,15 +8,15 @@
   "exports": {
     ".": {
       "types": "./dist/plugin/opencode-server.d.ts",
-      "default": "./dist/server.mjs"
+      "import": "./dist/server.mjs"
     },
     "./server": {
       "types": "./dist/plugin/opencode-server.d.ts",
-      "default": "./dist/server.mjs"
+      "import": "./dist/server.mjs"
     },
     "./tui": {
       "types": "./dist/plugin/opencode-tui.d.ts",
-      "default": "./dist/tui.mjs"
+      "import": "./dist/tui.mjs"
     }
   },
   "repository": {

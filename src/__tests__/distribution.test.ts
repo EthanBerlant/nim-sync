@@ -18,13 +18,13 @@ describe('distribution metadata', () => {
     expect(packageJson.main).toBe('dist/server.mjs')
     expect(packageJson.exports).toMatchObject({
       '.': {
-        default: './dist/server.mjs'
+        import: './dist/server.mjs'
       },
       './server': {
-        default: './dist/server.mjs'
+        import: './dist/server.mjs'
       },
       './tui': {
-        default: './dist/tui.mjs'
+        import: './dist/tui.mjs'
       }
     })
     expect(packageJson.files).toEqual(
@@ -36,8 +36,9 @@ describe('distribution metadata', () => {
   it('documents the supported install path without migration guidance', async () => {
     const readme = await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf-8')
 
-    expect(readme).toContain('opencode plugin nim-sync')
+    expect(readme).toContain('opencode plugin nim-sync -g')
     expect(readme).toContain('/nim-refresh')
+    expect(readme).toContain('You do not need to edit `opencode.json` manually')
     expect(readme).not.toContain('tui.json')
     expect(readme).not.toContain('Restart OpenCode one more time')
     expect(readme).not.toContain('Copy-Item dist/nim-sync.mjs')
