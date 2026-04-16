@@ -536,6 +536,105 @@ describe('NIM Sync Unit Tests', () => {
       })
       await initPromise
     })
+
+    it('seeds command.nim-refresh into config even when the initial refresh cannot authenticate', async () => {
+      delete process.env.NVIDIA_API_KEY
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        return Promise.resolve('{}')
+      })
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await flushAsyncWork()
+
+      const configWrite = vi.mocked(fs.writeFile).mock.calls
+        .filter(([filePath]) => String(filePath).includes('opencode.json'))
+        .at(-1)
+      const updatedConfig = JSON.parse(String(configWrite?.[1] ?? '{}'))
+
+      expect(updatedConfig.command['nim-refresh']).toMatchObject({
+        description: 'Refresh NVIDIA NIM models',
+        subtask: false
+      })
+      expect(updatedConfig.command['nim-refresh'].template).toContain('refresh the NVIDIA NIM model catalog')
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA API Key Required',
+          variant: 'error'
+        })
+      )
+    })
+
+    it('backfills command.nim-refresh even when the cache TTL skips the NVIDIA fetch', async () => {
+      const recentCache = JSON.stringify({
+        lastRefresh: Date.now() - 60_000,
+        modelsHash: 'test-hash-value',
+        baseURL: 'https://integrate.api.nvidia.com/v1'
+      })
+      const existingConfig = JSON.stringify({
+        provider: {
+          nim: {
+            npm: '@ai-sdk/openai-compatible',
+            name: 'NVIDIA NIM',
+            options: {
+              baseURL: 'https://integrate.api.nvidia.com/v1'
+            },
+            models: {
+              'existing-model': {
+                name: 'Existing Model',
+                options: {}
+              }
+            }
+          }
+        }
+      })
+
+      mockPluginAPI.config.get = vi.fn(() => ({
+        provider: {
+          nim: {
+            models: {
+              'existing-model': {
+                name: 'Existing Model',
+                options: {}
+              }
+            }
+          }
+        }
+      })) as any
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        if (filePath.includes('nim-sync-cache.json')) {
+          return Promise.resolve(recentCache)
+        }
+        return Promise.resolve(existingConfig)
+      })
+
+      const mockFetch = vi.fn()
+      global.fetch = mockFetch
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await flushAsyncWork()
+
+      const configWrite = vi.mocked(fs.writeFile).mock.calls
+        .filter(([filePath]) => String(filePath).includes('opencode.json'))
+        .at(-1)
+      const updatedConfig = JSON.parse(String(configWrite?.[1] ?? '{}'))
+
+      expect(updatedConfig.command['nim-refresh']).toMatchObject({
+        description: 'Refresh NVIDIA NIM models',
+        subtask: false
+      })
+      expect(updatedConfig.command['nim-refresh'].template).toContain('refresh the NVIDIA NIM model catalog')
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
   })
 
   describe('error handling', () => {

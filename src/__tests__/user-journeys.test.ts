@@ -219,12 +219,13 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       const plugin = await syncNIMModels(mockPluginAPI)
       await plugin.init?.()
-      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+      await vi.waitFor(() => expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(1))
+      await flushAsyncWork()
 
       vi.clearAllMocks()
       await refreshHandler()
 
-      expect(mockFetch).toHaveBeenCalled()
+      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
     }, 10000)
 
     it('manual refresh shows feedback when models are already up to date', async () => {

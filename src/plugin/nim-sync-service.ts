@@ -88,6 +88,12 @@ const managedRefreshCommandMatches = (
   return JSON.stringify(sortKeysDeep(currentConfig ?? null)) === JSON.stringify(sortKeysDeep(nextConfig))
 }
 
+const buildManagedRefreshCommand = (): NonNullable<OpenCodeConfig['command']>[typeof REFRESH_COMMAND_NAME] => ({
+  description: REFRESH_COMMAND_DESCRIPTION,
+  template: REFRESH_COMMAND_TEMPLATE,
+  subtask: false
+})
+
 function validateAPIResponse(response: unknown): NIMModel[] {
   if (!response || typeof response !== 'object') throw new Error('Invalid API response: Expected object, got ' + (response === null ? 'null' : typeof response))
   const obj = response as Record<string, unknown>
@@ -220,6 +226,74 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
     }
   }
 
+  const persistManagedConfigUpdates = async (
+    configPath: string,
+    updatedConfig: OpenCodeConfig,
+    updates: Array<{
+      jsonPath: Array<string | number>
+      data: unknown
+    }>,
+    options: {
+      validate?: boolean
+    } = {}
+  ): Promise<void> => {
+    let releaseLockFn: (() => Promise<void>) | null = null
+    try { releaseLockFn = await acquireLock('nim-config-update') } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown'
+      console.error('[NIM-Sync] Config lock failed:', msg)
+      showToast({ title: 'NVIDIA Config Lock Failed', message: msg, variant: 'error' })
+      throw e
+    }
+    try {
+      if (options.validate !== false) {
+        const validation = validateOpenCodeConfig(updatedConfig)
+        if (!validation.valid) {
+          console.warn('[NIM-Sync] Config validation warnings:', validation.errors)
+        }
+      }
+      await updateJSONCPaths(
+        configPath,
+        updates,
+        { backup: true, createBackupDir: true }
+      )
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown'
+      console.error('[NIM-Sync] Config update failed:', msg)
+      showToast({ title: 'NVIDIA Config Update Failed', message: msg, variant: 'error' })
+      throw e
+    } finally {
+      if (releaseLockFn) { try { await releaseLockFn() } catch (e) { console.error('[NIM-Sync] Failed to release config lock:', e) } }
+    }
+  }
+
+  const ensureRefreshCommand = async (): Promise<boolean> => {
+    const configPath = await getConfigFilePath()
+    const config = await readJSONC<OpenCodeConfig>(configPath)
+    const updatedRefreshCommand = buildManagedRefreshCommand()
+
+    if (!managedRefreshCommandMatches(config?.command?.[REFRESH_COMMAND_NAME], updatedRefreshCommand)) {
+      const updatedConfig: OpenCodeConfig = {
+        ...(config || {}),
+        command: {
+          ...config?.command,
+          [REFRESH_COMMAND_NAME]: updatedRefreshCommand
+        }
+      }
+
+      await persistManagedConfigUpdates(
+        configPath,
+        updatedConfig,
+        [
+          { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }
+        ],
+        { validate: false }
+      )
+      return true
+    }
+
+    return false
+  }
+
   const updateConfig = async (models: NIMModel[]): Promise<boolean> => {
     const configPath = await getConfigFilePath()
     const config = await readJSONC<OpenCodeConfig>(configPath)
@@ -241,11 +315,7 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       },
       models: newModels
     }
-    const updatedRefreshCommand: NonNullable<OpenCodeConfig['command']>[typeof REFRESH_COMMAND_NAME] = {
-      description: REFRESH_COMMAND_DESCRIPTION,
-      template: REFRESH_COMMAND_TEMPLATE,
-      subtask: false
-    }
+    const updatedRefreshCommand = buildManagedRefreshCommand()
     const managedConfigChanged = !managedNIMConfigMatches(config?.provider?.nim, updatedNIMConfig)
     const managedCommandChanged = !managedRefreshCommandMatches(
       config?.command?.[REFRESH_COMMAND_NAME],
@@ -259,44 +329,25 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       return false
     }
 
-    let releaseLockFn: (() => Promise<void>) | null = null
-    try { releaseLockFn = await acquireLock('nim-config-update') } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown'
-      console.error('[NIM-Sync] Config lock failed:', msg)
-      showToast({ title: 'NVIDIA Config Lock Failed', message: msg, variant: 'error' })
-      throw e
+    const updatedConfig: OpenCodeConfig = {
+      ...(config || {}),
+      command: {
+        ...config?.command,
+        [REFRESH_COMMAND_NAME]: updatedRefreshCommand
+      },
+      provider: { ...config?.provider, nim: updatedNIMConfig }
     }
-    try {
-      const updatedConfig: OpenCodeConfig = {
-        ...(config || {}),
-        command: {
-          ...config?.command,
-          [REFRESH_COMMAND_NAME]: updatedRefreshCommand
-        },
-        provider: { ...config?.provider, nim: updatedNIMConfig }
-      }
-      const validation = validateOpenCodeConfig(updatedConfig)
-      if (!validation.valid) {
-        console.warn('[NIM-Sync] Config validation warnings:', validation.errors)
-      }
-      await updateJSONCPaths(
-        configPath,
-        [
-          { jsonPath: ['provider', 'nim'], data: updatedNIMConfig },
-          { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }
-        ],
-        { backup: true, createBackupDir: true }
-      )
-      try { await writeCache({ lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL }) } catch { /* non-fatal */ }
-      return true
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown'
-      console.error('[NIM-Sync] Config update failed:', msg)
-      showToast({ title: 'NVIDIA Config Update Failed', message: msg, variant: 'error' })
-      throw e
-    } finally {
-      if (releaseLockFn) { try { await releaseLockFn() } catch (e) { console.error('[NIM-Sync] Failed to release config lock:', e) } }
-    }
+
+    await persistManagedConfigUpdates(
+      configPath,
+      updatedConfig,
+      [
+        { jsonPath: ['provider', 'nim'], data: updatedNIMConfig },
+        { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }
+      ]
+    )
+    try { await writeCache({ lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL }) } catch { /* non-fatal */ }
+    return true
   }
 
   const runRefreshModels = async (force = false, source: RefreshSource = 'background'): Promise<void> => {
@@ -313,6 +364,7 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
     refreshInProgress = true
     let apiKey: string | null = null
     try {
+      await ensureRefreshCommand()
       if (!force && !(await shouldRefresh())) return
       apiKey = await getAPIKey()
       if (!apiKey) {

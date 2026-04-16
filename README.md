@@ -20,7 +20,7 @@ The simplest install path is OpenCode's built-in plugin installer:
 opencode plugin nim-sync -g
 ```
 
-That is the supported path. It installs both the server and TUI plugin targets into your global OpenCode config, so background sync and `/nim-refresh` autocomplete are available after restart.
+That is the supported path. It installs both the server and TUI plugin targets into your global OpenCode config, so background sync is available immediately and the plugin can keep `command.nim-refresh` available for desktop and TUI command discovery.
 
 You can also install through the Plugins dialog in OpenCode.
 
@@ -30,8 +30,8 @@ Ensure you have an NVIDIA API key either:
    - Set `NVIDIA_API_KEY` environment variable
    - Run `/connect` in OpenCode to add NVIDIA credentials
 
-On startup, the server plugin refreshes the NVIDIA model catalog in the background.
-The TUI plugin registers `/nim-refresh` for manual updates.
+On startup, the server plugin refreshes the NVIDIA model catalog in the background and manages `command.nim-refresh` in your OpenCode config.
+The TUI plugin additionally registers `/nim-refresh` for TUI autocomplete.
 
 ## Configuration
 
@@ -193,8 +193,8 @@ scripts/
 ```
 
 ### Key Components
-- **Server Plugin**: Runs background refresh on OpenCode lifecycle events
-- **TUI Plugin**: Registers `/nim-refresh` for slash autocomplete
+- **Server Plugin**: Runs background refresh, keeps `command.nim-refresh` synced, and handles manual execution
+- **TUI Plugin**: Registers `/nim-refresh` for TUI autocomplete
 - **Shared Sync Service**: Holds the API, cache, and config update logic
 - **Credential Resolution**: Checks `/connect` auth or env var
 - **NVIDIA API Client**: Fetches `/v1/models` endpoint
