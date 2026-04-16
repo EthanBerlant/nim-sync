@@ -160,6 +160,12 @@ describe('NIM Sync Unit Tests', () => {
 
     it('deep merges provider.nim without overwriting other provider data', async () => {
       const existingConfig = JSON.stringify({
+        command: {
+          review: {
+            template: 'Review the current changes',
+            description: 'Review code'
+          }
+        },
         provider: {
           anthropic: { apiKey: 'anthropic-key', models: {} },
           openai: { apiKey: 'openai-key' }
@@ -173,10 +179,15 @@ describe('NIM Sync Unit Tests', () => {
       const changed = await (plugin as any).updateConfig(models)
 
       expect(changed).toBe(true)
-      const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
-        String(filePath).includes('opencode.jsonc')
-      )
+      const configWrite = vi.mocked(fs.writeFile).mock.calls
+        .filter(([filePath]) => String(filePath).includes('opencode.jsonc'))
+        .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1]))
+      expect(updatedConfig.command.review.template).toBe('Review the current changes')
+      expect(updatedConfig.command['nim-refresh']).toMatchObject({
+        description: 'Refresh NVIDIA NIM models',
+        subtask: false
+      })
       expect(updatedConfig.provider.anthropic.apiKey).toBe('anthropic-key')
       expect(updatedConfig.provider.openai.apiKey).toBe('openai-key')
       expect(updatedConfig.provider.nim.models).toBeDefined()
@@ -295,6 +306,13 @@ describe('NIM Sync Unit Tests', () => {
 
     it('refreshes the cache timestamp when models are unchanged', async () => {
       const existingConfig = JSON.stringify({
+        command: {
+          'nim-refresh': {
+            description: 'Refresh NVIDIA NIM models',
+            template: 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.',
+            subtask: false
+          }
+        },
         provider: {
           nim: {
             npm: '@ai-sdk/openai-compatible',
@@ -341,6 +359,13 @@ describe('NIM Sync Unit Tests', () => {
 
     it('reconciles managed nim fields even when the model hash is unchanged', async () => {
       const existingConfig = JSON.stringify({
+        command: {
+          'nim-refresh': {
+            template: 'stale template',
+            description: 'Stale description',
+            subtask: true
+          }
+        },
         provider: {
           nim: {
             npm: 'custom-package',
@@ -380,15 +405,20 @@ describe('NIM Sync Unit Tests', () => {
 
       expect(changed).toBe(true)
 
-      const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
-        String(filePath).includes('opencode.jsonc')
-      )
+      const configWrite = vi.mocked(fs.writeFile).mock.calls
+        .filter(([filePath]) => String(filePath).includes('opencode.jsonc'))
+        .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1]))
 
       expect(updatedConfig.provider.nim.npm).toBe('@ai-sdk/openai-compatible')
       expect(updatedConfig.provider.nim.name).toBe('NVIDIA NIM')
       expect(updatedConfig.provider.nim.options.baseURL).toBe('https://integrate.api.nvidia.com/v1')
       expect(updatedConfig.provider.nim.options.region).toBe('us-west-2')
+      expect(updatedConfig.command['nim-refresh']).toMatchObject({
+        description: 'Refresh NVIDIA NIM models',
+        subtask: false
+      })
+      expect(updatedConfig.command['nim-refresh'].template).toContain('refresh the NVIDIA NIM model catalog')
     })
 
     it('writes the cache file to the cache directory instead of the config directory', async () => {

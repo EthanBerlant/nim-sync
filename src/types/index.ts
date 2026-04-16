@@ -25,6 +25,13 @@ export interface LockMetadata {
 
 export interface OpenCodeConfig {
   $schema?: string
+  command?: Record<string, {
+    template: string
+    description?: string
+    agent?: string
+    model?: string
+    subtask?: boolean
+  }>
   provider?: {
     nim?: {
       npm?: string

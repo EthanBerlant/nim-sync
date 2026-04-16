@@ -135,6 +135,49 @@ export async function updateJSONCPath<T = unknown>(
 }
 
 /**
+ * Updates multiple paths within a JSONC file and persists them with a single
+ * atomic write, preserving unrelated comments and formatting.
+ *
+ * @param filePath - Path to the JSONC file
+ * @param updates - JSON paths and values to update
+ * @param options - Optional backup and directory creation settings
+ */
+export async function updateJSONCPaths(
+  filePath: string,
+  updates: Array<{
+    jsonPath: Array<string | number>
+    data: unknown
+  }>,
+  options?: AtomicWriteOptions
+): Promise<void> {
+  let existingContent = ''
+
+  try {
+    existingContent = await fs.readFile(filePath, 'utf-8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+  }
+
+  const eol = existingContent.includes('\r\n') ? '\r\n' : '\n'
+  let updatedContent = existingContent
+
+  for (const update of updates) {
+    const edits = modifyJSONC(updatedContent, update.jsonPath, update.data, {
+      formattingOptions: {
+        insertSpaces: true,
+        tabSize: 2,
+        eol
+      }
+    })
+    updatedContent = applyEdits(updatedContent, edits)
+  }
+
+  await atomicWrite(filePath, updatedContent, options)
+}
+
+/**
  * Atomically writes content to a file using temp file + rename pattern.
  * Optionally creates backups before overwriting and cleans up old backups.
  * 

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const refreshModels = vi.fn()
+const manualRefresh = vi.fn()
 
 vi.mock('../plugin/nim-sync-service.js', () => ({
   createNIMSyncService: vi.fn(() => ({
-    refreshModels
+    refreshModels,
+    manualRefresh
   }))
 }))
 
@@ -13,6 +15,7 @@ import plugin from '../plugin/opencode-server.js'
 describe('official server plugin', () => {
   beforeEach(() => {
     refreshModels.mockReset()
+    manualRefresh.mockReset()
   })
 
   it('exposes a stable plugin id', () => {
@@ -41,5 +44,36 @@ describe('official server plugin', () => {
     await hooks.event?.({ event: { type: 'session.created' } as any })
 
     expect(refreshModels).toHaveBeenCalledTimes(2)
+  })
+
+  it('runs a manual refresh when /nim-refresh executes through the command system', async () => {
+    const hooks = await plugin.server({
+      client: {
+        tui: {
+          showToast: vi.fn()
+        }
+      }
+    } as any, undefined)
+
+    const output = {
+      parts: [
+        {
+          type: 'text',
+          text: 'original template'
+        }
+      ]
+    }
+
+    await hooks['command.execute.before']?.(
+      {
+        command: 'nim-refresh',
+        sessionID: 'session-1',
+        arguments: ''
+      },
+      output as any
+    )
+
+    expect(manualRefresh).toHaveBeenCalledTimes(1)
+    expect(output.parts[0].text).toContain('handled by the nim-sync plugin')
   })
 })

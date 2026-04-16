@@ -19,6 +19,22 @@ const server: Plugin = async (input) => {
       if (event.type === 'server.connected' || event.type === 'session.created') {
         await service.refreshModels()
       }
+    },
+    'command.execute.before': async ({ command }, output) => {
+      if (command !== 'nim-refresh') {
+        return
+      }
+
+      await service.manualRefresh()
+
+      const textPart = output.parts.find(
+        (part): part is typeof part & { type: 'text'; text: string } =>
+          part.type === 'text' && typeof (part as { text?: unknown }).text === 'string'
+      )
+
+      if (textPart) {
+        textPart.text = 'The /nim-refresh command was already handled by the nim-sync plugin. Reply with exactly: "NVIDIA NIM refresh complete."'
+      }
     }
   }
 }

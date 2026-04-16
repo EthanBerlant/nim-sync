@@ -8,6 +8,7 @@ A global OpenCode plugin that automatically synchronizes NVIDIA NIM models with 
 - **Config Management**: Updates `provider.nim.models` in your OpenCode config
 - **TTL Cache**: Only refreshes models if last refresh was >24 hours ago
 - **Manual Refresh**: `/nim-refresh` command for force updates
+- **Slash Autocomplete**: Manages `command.nim-refresh` so `/nim-refresh` appears in OpenCode command suggestions
 - **Atomic Operations**: Safe file writes with backups and locking
 - **Error Handling**: Graceful fallback when offline or missing API key
 
@@ -62,6 +63,7 @@ The plugin ONLY manages:
 - `provider.nim.name`
 - `provider.nim.options.baseURL`
 - `provider.nim.models`
+- `command.nim-refresh`
 
 You retain control over:
 - Top-level `model` selection

@@ -7,7 +7,7 @@ import { withRetry } from '../lib/retry.js'
 import {
   readJSONC,
   writeJSONC,
-  updateJSONCPath,
+  updateJSONCPaths,
   acquireLock,
   getConfigDir,
   getCacheDir,
@@ -20,6 +20,9 @@ import {
 const NIM_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 const CACHE_FILE_NAME = 'nim-sync-cache.json'
 const CONFIG_FILE_NAME = 'opencode.jsonc'
+const REFRESH_COMMAND_NAME = 'nim-refresh'
+const REFRESH_COMMAND_DESCRIPTION = 'Refresh NVIDIA NIM models'
+const REFRESH_COMMAND_TEMPLATE = 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.'
 
 const ALLOWED_MODEL_PROPERTIES = new Set([
   'id', 'name', 'description', 'model_type', 'quantization',
@@ -27,6 +30,7 @@ const ALLOWED_MODEL_PROPERTIES = new Set([
 ])
 
 type RefreshSource = 'background' | 'manual'
+type RefreshCommandConfig = NonNullable<OpenCodeConfig['command']>[string]
 
 export interface NIMSyncToast {
   title: string
@@ -75,6 +79,13 @@ const sortKeysDeep = (value: unknown): unknown => {
 const managedNIMConfigMatches = (
   currentConfig: NonNullable<OpenCodeConfig['provider']>['nim'] | undefined,
   nextConfig: NonNullable<OpenCodeConfig['provider']>['nim']
+): boolean => {
+  return JSON.stringify(sortKeysDeep(currentConfig ?? null)) === JSON.stringify(sortKeysDeep(nextConfig))
+}
+
+const managedRefreshCommandMatches = (
+  currentConfig: RefreshCommandConfig | undefined,
+  nextConfig: RefreshCommandConfig
 ): boolean => {
   return JSON.stringify(sortKeysDeep(currentConfig ?? null)) === JSON.stringify(sortKeysDeep(nextConfig))
 }
@@ -231,9 +242,18 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       },
       models: newModels
     }
+    const updatedRefreshCommand: NonNullable<OpenCodeConfig['command']>[typeof REFRESH_COMMAND_NAME] = {
+      description: REFRESH_COMMAND_DESCRIPTION,
+      template: REFRESH_COMMAND_TEMPLATE,
+      subtask: false
+    }
     const managedConfigChanged = !managedNIMConfigMatches(config?.provider?.nim, updatedNIMConfig)
+    const managedCommandChanged = !managedRefreshCommandMatches(
+      config?.command?.[REFRESH_COMMAND_NAME],
+      updatedRefreshCommand
+    )
 
-    if (cache?.modelsHash === modelsHash && !managedConfigChanged) {
+    if (cache?.modelsHash === modelsHash && !managedConfigChanged && !managedCommandChanged) {
       try {
         await writeCache({ ...cache, lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL })
       } catch { /* non-fatal */ }
@@ -250,13 +270,24 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
     try {
       const updatedConfig: OpenCodeConfig = {
         ...(config || {}),
+        command: {
+          ...config?.command,
+          [REFRESH_COMMAND_NAME]: updatedRefreshCommand
+        },
         provider: { ...config?.provider, nim: updatedNIMConfig }
       }
       const validation = validateOpenCodeConfig(updatedConfig)
       if (!validation.valid) {
         console.warn('[NIM-Sync] Config validation warnings:', validation.errors)
       }
-      await updateJSONCPath(getConfigPath(), ['provider', 'nim'], updatedNIMConfig, { backup: true, createBackupDir: true })
+      await updateJSONCPaths(
+        getConfigPath(),
+        [
+          { jsonPath: ['provider', 'nim'], data: updatedNIMConfig },
+          { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }
+        ],
+        { backup: true, createBackupDir: true }
+      )
       try { await writeCache({ lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL }) } catch { /* non-fatal */ }
       return true
     } catch (e) {
