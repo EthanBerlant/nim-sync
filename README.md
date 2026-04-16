@@ -24,7 +24,7 @@ That is the supported path. It installs both the server and TUI plugin targets i
 
 You can also install through the Plugins dialog in OpenCode.
 
-You do not need to edit `opencode.json` manually when you use the installer. It updates the OpenCode config files for you.
+You do not need to edit `opencode.json` manually when you use the installer. It updates your existing OpenCode config file (`opencode.json` or `opencode.jsonc`) for you.
 
 Ensure you have an NVIDIA API key either:
    - Set `NVIDIA_API_KEY` environment variable

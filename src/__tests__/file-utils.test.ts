@@ -8,6 +8,7 @@ import {
   ensureDir,
   getConfigDir,
   getCacheDir,
+  getDataDir,
   acquireLock
 } from '../lib/file-utils.js'
 
@@ -224,8 +225,7 @@ describe('File Utils', () => {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
       
       const dir = getConfigDir()
-      expect(dir).toContain('AppData')
-      expect(dir).toContain('Roaming')
+      expect(dir).toContain('.config')
       expect(dir).toContain('opencode')
       
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
@@ -249,10 +249,8 @@ describe('File Utils', () => {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
       
       const dir = getCacheDir()
-      expect(dir).toContain('AppData')
-      expect(dir).toContain('Local')
+      expect(dir).toContain('.cache')
       expect(dir).toContain('opencode')
-      expect(dir).toContain('cache')
       
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
     })
@@ -265,6 +263,32 @@ describe('File Utils', () => {
       expect(dir).toContain('.cache')
       expect(dir).toContain('opencode')
       
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    })
+  })
+
+  describe('getDataDir', () => {
+    it('returns Windows data path on Windows', () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+
+      const dir = getDataDir()
+      expect(dir).toContain('.local')
+      expect(dir).toContain('share')
+      expect(dir).toContain('opencode')
+
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    })
+
+    it('returns Unix data path on Linux/macOS', () => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+
+      const dir = getDataDir()
+      expect(dir).toContain('.local')
+      expect(dir).toContain('share')
+      expect(dir).toContain('opencode')
+
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
     })
   })

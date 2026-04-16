@@ -9,7 +9,7 @@ import {
   writeJSONC,
   updateJSONCPaths,
   acquireLock,
-  getConfigDir,
+  getConfigFilePath,
   getCacheDir,
   getDataDir,
   API_TIMEOUT_MS,
@@ -19,7 +19,6 @@ import {
 
 const NIM_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 const CACHE_FILE_NAME = 'nim-sync-cache.json'
-const CONFIG_FILE_NAME = 'opencode.jsonc'
 const REFRESH_COMMAND_NAME = 'nim-refresh'
 const REFRESH_COMMAND_DESCRIPTION = 'Refresh NVIDIA NIM models'
 const REFRESH_COMMAND_TEMPLATE = 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.'
@@ -52,11 +51,10 @@ export interface NIMSyncService {
 }
 
 const getCachePath = (): string => path.join(getCacheDir(), CACHE_FILE_NAME)
-const getConfigPath = (): string => path.join(getConfigDir(), CONFIG_FILE_NAME)
 const getAuthPath = (): string => path.join(getDataDir(), 'auth.json')
 
 const defaultGetConfigSnapshot = async (): Promise<OpenCodeConfig> => {
-  return readJSONC<OpenCodeConfig>(getConfigPath())
+  return readJSONC<OpenCodeConfig>(await getConfigFilePath())
 }
 
 const sortKeysDeep = (value: unknown): unknown => {
@@ -223,7 +221,8 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
   }
 
   const updateConfig = async (models: NIMModel[]): Promise<boolean> => {
-    const config = await readJSONC<OpenCodeConfig>(getConfigPath())
+    const configPath = await getConfigFilePath()
+    const config = await readJSONC<OpenCodeConfig>(configPath)
 
     const newModels = models.reduce((acc, m) => {
       acc[m.id] = { name: m.name, options: config?.provider?.nim?.models?.[m.id]?.options || {} }
@@ -281,7 +280,7 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
         console.warn('[NIM-Sync] Config validation warnings:', validation.errors)
       }
       await updateJSONCPaths(
-        getConfigPath(),
+        configPath,
         [
           { jsonPath: ['provider', 'nim'], data: updatedNIMConfig },
           { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }

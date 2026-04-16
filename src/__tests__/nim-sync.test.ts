@@ -137,12 +137,62 @@ describe('NIM Sync Unit Tests', () => {
   })
 
   describe('updateConfig', () => {
+    it('prefers opencode.json when that is the existing OpenCode config file', async () => {
+      const fileNotFound = Object.assign(new Error('File not found'), { code: 'ENOENT' })
+
+      vi.mocked(fs.access).mockImplementation(async (filePath: string) => {
+        if (String(filePath).endsWith('opencode.json')) {
+          return undefined
+        }
+        throw fileNotFound
+      })
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(fileNotFound)
+        }
+        if (String(filePath).endsWith('opencode.json')) {
+          return Promise.resolve('{}')
+        }
+        throw fileNotFound
+      })
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.updateConfig?.([
+        { id: 'model-1', name: 'Model 1' }
+      ])
+
+      const writePaths = vi.mocked(fs.writeFile).mock.calls.map(([filePath]) => String(filePath))
+      expect(writePaths.some(filePath => /opencode\.json(\.\d+\.tmp)?$/.test(filePath))).toBe(true)
+      expect(writePaths.some(filePath => /opencode\.jsonc(\.\d+\.tmp)?$/.test(filePath))).toBe(false)
+    })
+
+    it('creates opencode.json when no OpenCode config file exists yet', async () => {
+      const fileNotFound = Object.assign(new Error('File not found'), { code: 'ENOENT' })
+
+      vi.mocked(fs.access).mockRejectedValue(fileNotFound)
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(fileNotFound)
+        }
+        throw fileNotFound
+      })
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.updateConfig?.([
+        { id: 'model-1', name: 'Model 1' }
+      ])
+
+      const writePaths = vi.mocked(fs.writeFile).mock.calls.map(([filePath]) => String(filePath))
+      expect(writePaths.some(filePath => /opencode\.json(\.\d+\.tmp)?$/.test(filePath))).toBe(true)
+      expect(writePaths.some(filePath => /opencode\.jsonc(\.\d+\.tmp)?$/.test(filePath))).toBe(false)
+    })
+
     it('fails safe when the existing config cannot be parsed', async () => {
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
         if (filePath.includes('auth.json')) {
           return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
         }
-        if (filePath.includes('opencode.jsonc')) {
+        if (filePath.includes('opencode.json')) {
           return Promise.resolve('{ invalid json }')
         }
         return Promise.resolve('{}')
@@ -155,7 +205,7 @@ describe('NIM Sync Unit Tests', () => {
       ])).rejects.toThrow('JSONC parse errors')
 
       const writePaths = vi.mocked(fs.writeFile).mock.calls.map(([filePath]) => String(filePath))
-      expect(writePaths.some(filePath => filePath.includes('opencode.jsonc'))).toBe(false)
+      expect(writePaths.some(filePath => filePath.includes('opencode.json'))).toBe(false)
     })
 
     it('deep merges provider.nim without overwriting other provider data', async () => {
@@ -180,7 +230,7 @@ describe('NIM Sync Unit Tests', () => {
 
       expect(changed).toBe(true)
       const configWrite = vi.mocked(fs.writeFile).mock.calls
-        .filter(([filePath]) => String(filePath).includes('opencode.jsonc'))
+        .filter(([filePath]) => String(filePath).includes('opencode.json'))
         .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1]))
       expect(updatedConfig.command.review.template).toBe('Review the current changes')
@@ -260,7 +310,7 @@ describe('NIM Sync Unit Tests', () => {
       expect(changed).toBe(true)
 
       const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
-        String(filePath).includes('opencode.jsonc')
+        String(filePath).includes('opencode.json')
       )
       const updatedConfig = JSON.parse(String(configWrite?.[1]))
 
@@ -296,7 +346,7 @@ describe('NIM Sync Unit Tests', () => {
       expect(changed).toBe(true)
 
       const configWrite = vi.mocked(fs.writeFile).mock.calls.find(([filePath]) =>
-        String(filePath).includes('opencode.jsonc')
+        String(filePath).includes('opencode.json')
       )
       const updatedContent = String(configWrite?.[1])
 
@@ -354,7 +404,7 @@ describe('NIM Sync Unit Tests', () => {
 
       const writePaths = vi.mocked(fs.writeFile).mock.calls.map(([filePath]) => String(filePath))
       expect(writePaths.some(filePath => filePath.includes('nim-sync-cache.json'))).toBe(true)
-      expect(writePaths.some(filePath => filePath.includes('opencode.jsonc'))).toBe(false)
+      expect(writePaths.some(filePath => filePath.includes('opencode.json'))).toBe(false)
     })
 
     it('reconciles managed nim fields even when the model hash is unchanged', async () => {
@@ -406,7 +456,7 @@ describe('NIM Sync Unit Tests', () => {
       expect(changed).toBe(true)
 
       const configWrite = vi.mocked(fs.writeFile).mock.calls
-        .filter(([filePath]) => String(filePath).includes('opencode.jsonc'))
+        .filter(([filePath]) => String(filePath).includes('opencode.json'))
         .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1]))
 

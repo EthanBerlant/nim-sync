@@ -1,6 +1,6 @@
 /**
  * JSON Schema for OpenCode configuration validation.
- * Validates the structure of opencode.jsonc files.
+ * Validates the structure of OpenCode config files.
  */
 export const OpenCodeConfigSchema = {
  $schema: 'http://json-schema.org/draft-07/schema#',

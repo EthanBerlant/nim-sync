@@ -44,6 +44,11 @@ export const MIN_MANUAL_REFRESH_INTERVAL_MS = 60_000
 export const MAX_BACKUPS = 5
 
 /**
+ * OpenCode config file names in preference order.
+ */
+export const OPENCODE_CONFIG_FILENAMES = ['opencode.json', 'opencode.jsonc'] as const
+
+/**
  * Reads and parses a JSONC (JSON with Comments) file.
  * 
  * @param filePath - Path to the JSONC file
@@ -246,30 +251,26 @@ export async function ensureDir(dirPath: string): Promise<void> {
 
 /**
  * Returns platform-specific paths for config, data, and cache directories.
- * Handles Windows, Linux, and macOS path conventions.
+ * Uses the XDG-style directories OpenCode reports across supported platforms.
  * 
  * @returns Platform-specific directory paths
  * @example
  * ```typescript
  * const paths = getPlatformPaths()
- * // Windows: { config: 'C:\\Users\\username\\AppData\\Roaming\\opencode', ... }
+ * // Windows: { config: 'C:\\Users\\username\\.config\\opencode', ... }
  * // Linux: { config: '/home/username/.config/opencode', ... }
  * ```
  */
 function getPlatformPaths(): PlatformPaths {
   const home = process.env.HOME || process.env.USERPROFILE || ''
-  const isWindows = process.platform === 'win32'
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config')
+  const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share')
+  const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache')
   
   return {
-    config: isWindows 
-      ? path.join(home, 'AppData', 'Roaming', 'opencode')
-      : path.join(home, '.config', 'opencode'),
-    data: isWindows
-      ? path.join(home, 'AppData', 'Roaming', 'opencode')
-      : path.join(home, '.local', 'share', 'opencode'),
-    cache: isWindows
-      ? path.join(home, 'AppData', 'Local', 'opencode', 'cache')
-      : path.join(home, '.cache', 'opencode')
+    config: path.join(configHome, 'opencode'),
+    data: path.join(dataHome, 'opencode'),
+    cache: path.join(cacheHome, 'opencode')
   }
 }
 
@@ -298,6 +299,31 @@ export function getCacheDir(): string {
  */
 export function getDataDir(): string {
   return getPlatformPaths().data
+}
+
+/**
+ * Resolves the OpenCode config file path, preferring an existing JSON file and
+ * falling back to JSONC when present. If neither exists yet, defaults to
+ * opencode.json.
+ *
+ * @returns Absolute path to the OpenCode config file
+ */
+export async function getConfigFilePath(): Promise<string> {
+  const configDir = getConfigDir()
+
+  for (const fileName of OPENCODE_CONFIG_FILENAMES) {
+    const candidate = path.join(configDir, fileName)
+    try {
+      await fs.access(candidate)
+      return candidate
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+    }
+  }
+
+  return path.join(configDir, OPENCODE_CONFIG_FILENAMES[0])
 }
 
 /**
