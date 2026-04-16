@@ -1,15 +1,31 @@
 {
-  "name": "opencode-nim-sync",
+  "name": "nim-sync",
   "version": "1.0.0",
   "description": "OpenCode plugin to sync NVIDIA NIM models automatically",
-  "main": "dist/nim-sync.mjs",
-  "types": "dist/index.d.ts",
+  "main": "dist/server.mjs",
+  "types": "dist/plugin/opencode-server.d.ts",
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/nim-sync.mjs"
+      "types": "./dist/plugin/opencode-server.d.ts",
+      "default": "./dist/server.mjs"
+    },
+    "./server": {
+      "types": "./dist/plugin/opencode-server.d.ts",
+      "default": "./dist/server.mjs"
+    },
+    "./tui": {
+      "types": "./dist/plugin/opencode-tui.d.ts",
+      "default": "./dist/tui.mjs"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EthanBerlant/nim-sync.git"
+  },
+  "homepage": "https://github.com/EthanBerlant/nim-sync#readme",
+  "bugs": {
+    "url": "https://github.com/EthanBerlant/nim-sync/issues"
   },
   "files": [
     "dist",
@@ -27,7 +43,8 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "release:check": "node scripts/verify-release-tag.mjs"
   },
   "keywords": [
     "opencode",
@@ -37,7 +54,11 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "opencode": "^1.0.0"
+  },
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.4.6",
     "@types/node": "^20.11.24",
     "@typescript-eslint/eslint-plugin": "^6.19.1",
     "@typescript-eslint/parser": "^6.19.1",

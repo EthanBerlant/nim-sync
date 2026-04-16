@@ -3,27 +3,43 @@ import path from 'path'
 import { describe, expect, it } from 'vitest'
 
 describe('distribution metadata', () => {
-  it('points package metadata at the bundled plugin artifact', async () => {
+  it('publishes separate OpenCode server and TUI entrypoints', async () => {
     const packageJson = JSON.parse(
       await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf-8')
     ) as {
+      name?: string
       main?: string
+      exports?: Record<string, unknown>
       files?: string[]
       scripts?: Record<string, string>
     }
 
-    expect(packageJson.main).toBe('dist/nim-sync.mjs')
+    expect(packageJson.name).toBe('nim-sync')
+    expect(packageJson.main).toBe('dist/server.mjs')
+    expect(packageJson.exports).toMatchObject({
+      '.': {
+        default: './dist/server.mjs'
+      },
+      './server': {
+        default: './dist/server.mjs'
+      },
+      './tui': {
+        default: './dist/tui.mjs'
+      }
+    })
     expect(packageJson.files).toEqual(
       expect.arrayContaining(['dist', 'README.md'])
     )
     expect(packageJson.scripts?.prepack).toBe('npm run build')
   })
 
-  it('documents npm-based OpenCode installation instead of manual file copying', async () => {
+  it('documents the supported install path without migration guidance', async () => {
     const readme = await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf-8')
 
-    expect(readme).toContain('"plugin": ["opencode-nim-sync"]')
-    expect(readme).toContain('installed automatically using Bun at startup')
+    expect(readme).toContain('opencode plugin nim-sync')
+    expect(readme).toContain('/nim-refresh')
+    expect(readme).not.toContain('tui.json')
+    expect(readme).not.toContain('Restart OpenCode one more time')
     expect(readme).not.toContain('Copy-Item dist/nim-sync.mjs')
     expect(readme).not.toContain('cp dist/nim-sync.mjs')
   })

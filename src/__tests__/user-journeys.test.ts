@@ -226,6 +226,156 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
 
       expect(mockFetch).toHaveBeenCalled()
     }, 10000)
+
+    it('manual refresh shows feedback when models are already up to date', async () => {
+      const modelId = 'meta/llama-3.1-70b-instruct'
+      const modelName = 'Meta Llama 3.1 70B Instruct'
+      const currentConfig = JSON.stringify({
+        provider: {
+          nim: {
+            npm: '@ai-sdk/openai-compatible',
+            name: 'NVIDIA NIM',
+            options: { baseURL: 'https://integrate.api.nvidia.com/v1' },
+            models: {
+              [modelId]: { name: modelName, options: {} }
+            }
+          }
+        }
+      })
+      const currentCache = JSON.stringify({
+        lastRefresh: Date.now() - 60_000,
+        modelsHash: 'test-hash-value',
+        baseURL: 'https://integrate.api.nvidia.com/v1'
+      })
+
+      mockPluginAPI.config.get = vi.fn(() => ({
+        provider: {
+          nim: {
+            models: {
+              [modelId]: { name: modelName, options: {} }
+            }
+          }
+        }
+      })) as any
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        if (filePath.includes('nim-sync-cache.json')) {
+          return Promise.resolve(currentCache)
+        }
+        return Promise.resolve(currentConfig)
+      })
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          data: [{ id: modelId, name: modelName }]
+        })
+      })
+      global.fetch = mockFetch
+
+      let refreshHandler: () => Promise<void> = async () => {}
+      mockPluginAPI.command.register = vi.fn((name, handler) => {
+        if (name === 'nim-refresh') refreshHandler = handler as () => Promise<void>
+      }) as any
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await flushAsyncWork()
+
+      expect(mockFetch).not.toHaveBeenCalled()
+
+      await refreshHandler()
+
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA NIM Already Up To Date',
+          description: 'No model changes found.',
+          variant: 'default'
+        })
+      )
+    })
+
+    it('manual refresh shows feedback when a refresh is already in progress', async () => {
+      const modelId = 'meta/llama-3.1-70b-instruct'
+      const modelName = 'Meta Llama 3.1 70B Instruct'
+      const currentConfig = JSON.stringify({
+        provider: {
+          nim: {
+            models: {
+              [modelId]: { name: modelName, options: {} }
+            }
+          }
+        }
+      })
+      const currentCache = JSON.stringify({
+        lastRefresh: Date.now() - 60_000,
+        modelsHash: 'old-hash-value',
+        baseURL: 'https://integrate.api.nvidia.com/v1'
+      })
+
+      mockPluginAPI.config.get = vi.fn(() => ({
+        provider: {
+          nim: {
+            models: {
+              [modelId]: { name: modelName, options: {} }
+            }
+          }
+        }
+      })) as any
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        if (filePath.includes('nim-sync-cache.json')) {
+          return Promise.resolve(currentCache)
+        }
+        return Promise.resolve(currentConfig)
+      })
+
+      let resolveFetch: ((value: unknown) => void) | null = null
+      const mockFetch = vi.fn().mockImplementation(
+        () => new Promise(resolve => {
+          resolveFetch = resolve
+        })
+      )
+      global.fetch = mockFetch as any
+
+      let refreshHandler: () => Promise<void> = async () => {}
+      mockPluginAPI.command.register = vi.fn((name, handler) => {
+        if (name === 'nim-refresh') refreshHandler = handler as () => Promise<void>
+      }) as any
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await flushAsyncWork()
+
+      const inFlightRefresh = plugin.refreshModels?.(true)
+      await flushAsyncWork()
+
+      await refreshHandler()
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Refresh In Progress',
+          description: 'A model refresh is already running.',
+          variant: 'default'
+        })
+      )
+
+      resolveFetch?.({
+        ok: true,
+        json: () => Promise.resolve({
+          data: [{ id: modelId, name: modelName }]
+        })
+      })
+
+      await inFlightRefresh
+    })
   })
 
   describe('As a user, I want TTL-based refresh to avoid excessive API calls', () => {
