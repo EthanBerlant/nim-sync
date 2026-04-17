@@ -234,10 +234,7 @@ describe('NIM Sync Unit Tests', () => {
         .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1]))
       expect(updatedConfig.command.review.template).toBe('Review the current changes')
-      expect(updatedConfig.command['nim-refresh']).toMatchObject({
-        description: 'Refresh NVIDIA NIM models',
-        subtask: false
-      })
+      expect(updatedConfig.command['nim-refresh']).toBeUndefined()
       expect(updatedConfig.provider.anthropic.apiKey).toBe('anthropic-key')
       expect(updatedConfig.provider.openai.apiKey).toBe('openai-key')
       expect(updatedConfig.provider.nim.models).toBeDefined()
@@ -356,13 +353,6 @@ describe('NIM Sync Unit Tests', () => {
 
     it('refreshes the cache timestamp when models are unchanged', async () => {
       const existingConfig = JSON.stringify({
-        command: {
-          'nim-refresh': {
-            description: 'Refresh NVIDIA NIM models',
-            template: 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.',
-            subtask: false
-          }
-        },
         provider: {
           nim: {
             npm: '@ai-sdk/openai-compatible',
@@ -407,13 +397,13 @@ describe('NIM Sync Unit Tests', () => {
       expect(writePaths.some(filePath => filePath.includes('opencode.json'))).toBe(false)
     })
 
-    it('reconciles managed nim fields even when the model hash is unchanged', async () => {
+    it('reconciles managed nim fields and removes the legacy managed slash command when the model hash is unchanged', async () => {
       const existingConfig = JSON.stringify({
         command: {
           'nim-refresh': {
-            template: 'stale template',
-            description: 'Stale description',
-            subtask: true
+            description: 'Refresh NVIDIA NIM models',
+            template: 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.',
+            subtask: false
           }
         },
         provider: {
@@ -464,11 +454,7 @@ describe('NIM Sync Unit Tests', () => {
       expect(updatedConfig.provider.nim.name).toBe('NVIDIA NIM')
       expect(updatedConfig.provider.nim.options.baseURL).toBe('https://integrate.api.nvidia.com/v1')
       expect(updatedConfig.provider.nim.options.region).toBe('us-west-2')
-      expect(updatedConfig.command['nim-refresh']).toMatchObject({
-        description: 'Refresh NVIDIA NIM models',
-        subtask: false
-      })
-      expect(updatedConfig.command['nim-refresh'].template).toContain('refresh the NVIDIA NIM model catalog')
+      expect(updatedConfig.command).toBeUndefined()
     })
 
     it('writes the cache file to the cache directory instead of the config directory', async () => {
@@ -537,14 +523,22 @@ describe('NIM Sync Unit Tests', () => {
       await initPromise
     })
 
-    it('seeds command.nim-refresh into config even when the initial refresh cannot authenticate', async () => {
+    it('removes the legacy managed command even when the initial refresh cannot authenticate', async () => {
       delete process.env.NVIDIA_API_KEY
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
         if (filePath.includes('auth.json')) {
           return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
         }
-        return Promise.resolve('{}')
+        return Promise.resolve(JSON.stringify({
+          command: {
+            'nim-refresh': {
+              description: 'Refresh NVIDIA NIM models',
+              template: 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.',
+              subtask: false
+            }
+          }
+        }))
       })
 
       const plugin = await syncNIMModels(mockPluginAPI)
@@ -556,11 +550,7 @@ describe('NIM Sync Unit Tests', () => {
         .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1] ?? '{}'))
 
-      expect(updatedConfig.command['nim-refresh']).toMatchObject({
-        description: 'Refresh NVIDIA NIM models',
-        subtask: false
-      })
-      expect(updatedConfig.command['nim-refresh'].template).toContain('refresh the NVIDIA NIM model catalog')
+      expect(updatedConfig.command).toBeUndefined()
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'NVIDIA API Key Required',
@@ -569,13 +559,20 @@ describe('NIM Sync Unit Tests', () => {
       )
     })
 
-    it('backfills command.nim-refresh even when the cache TTL skips the NVIDIA fetch', async () => {
+    it('removes the legacy managed command even when the cache TTL skips the NVIDIA fetch', async () => {
       const recentCache = JSON.stringify({
         lastRefresh: Date.now() - 60_000,
         modelsHash: 'test-hash-value',
         baseURL: 'https://integrate.api.nvidia.com/v1'
       })
       const existingConfig = JSON.stringify({
+        command: {
+          'nim-refresh': {
+            description: 'Refresh NVIDIA NIM models',
+            template: 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.',
+            subtask: false
+          }
+        },
         provider: {
           nim: {
             npm: '@ai-sdk/openai-compatible',
@@ -628,11 +625,7 @@ describe('NIM Sync Unit Tests', () => {
         .at(-1)
       const updatedConfig = JSON.parse(String(configWrite?.[1] ?? '{}'))
 
-      expect(updatedConfig.command['nim-refresh']).toMatchObject({
-        description: 'Refresh NVIDIA NIM models',
-        subtask: false
-      })
-      expect(updatedConfig.command['nim-refresh'].template).toContain('refresh the NVIDIA NIM model catalog')
+      expect(updatedConfig.command).toBeUndefined()
       expect(mockFetch).not.toHaveBeenCalled()
     })
   })
@@ -940,6 +933,112 @@ describe('NIM Sync Unit Tests', () => {
         })
       )
       expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it('does not arm the rate limiter when a manual refresh is blocked by an in-progress refresh', async () => {
+      const mockFetch = vi.fn().mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: [{ id: 'm1', name: 'M1' }] })
+        }
+      })
+      global.fetch = mockFetch
+
+      let nimRefreshHandler: (() => Promise<void>) | null = null
+      mockPluginAPI.command.register = vi.fn((name, handler) => {
+        if (name === 'nim-refresh') {
+          nimRefreshHandler = handler as () => Promise<void>
+        }
+      }) as any
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await flushAsyncWork()
+
+      const inFlightRefresh = plugin.refreshModels?.(true)
+      await flushAsyncWork()
+
+      expect(nimRefreshHandler).not.toBeNull()
+      if (nimRefreshHandler) {
+        await nimRefreshHandler()
+      }
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Refresh In Progress',
+          description: 'A model refresh is already running.',
+          variant: 'default'
+        })
+      )
+
+      vi.clearAllMocks()
+      if (nimRefreshHandler) {
+        await nimRefreshHandler()
+      }
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'NVIDIA Refresh In Progress',
+          description: 'A model refresh is already running.',
+          variant: 'default'
+        })
+      )
+      expect(mockPluginAPI.tui.toast.show).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Rate Limited'
+        })
+      )
+
+      await inFlightRefresh
+    })
+
+    it('does not arm the rate limiter when a manual refresh is blocked by missing credentials', async () => {
+      delete process.env.NVIDIA_API_KEY
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes('auth.json')) {
+          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        }
+        return Promise.resolve('{}')
+      })
+
+      let nimRefreshHandler: (() => Promise<void>) | null = null
+      mockPluginAPI.command.register = vi.fn((name, handler) => {
+        if (name === 'nim-refresh') {
+          nimRefreshHandler = handler as () => Promise<void>
+        }
+      }) as any
+
+      const plugin = await syncNIMModels(mockPluginAPI)
+      await plugin.init?.()
+      await flushAsyncWork()
+
+      vi.clearAllMocks()
+      expect(nimRefreshHandler).not.toBeNull()
+
+      if (nimRefreshHandler) {
+        await nimRefreshHandler()
+        await nimRefreshHandler()
+      }
+
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledTimes(2)
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          title: 'NVIDIA API Key Required',
+          variant: 'error'
+        })
+      )
+      expect(mockPluginAPI.tui.toast.show).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          title: 'NVIDIA API Key Required',
+          variant: 'error'
+        })
+      )
+
+      process.env.NVIDIA_API_KEY = 'test-api-key'
     })
   })
 

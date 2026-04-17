@@ -46,7 +46,7 @@ describe('official server plugin', () => {
     expect(refreshModels).toHaveBeenCalledTimes(2)
   })
 
-  it('runs a manual refresh when /nim-refresh executes through the command system', async () => {
+  it('does not expose a server-side /nim-refresh prompt hook', async () => {
     const hooks = await plugin.server({
       client: {
         tui: {
@@ -55,25 +55,7 @@ describe('official server plugin', () => {
       }
     } as any, undefined)
 
-    const output = {
-      parts: [
-        {
-          type: 'text',
-          text: 'original template'
-        }
-      ]
-    }
-
-    await hooks['command.execute.before']?.(
-      {
-        command: 'nim-refresh',
-        sessionID: 'session-1',
-        arguments: ''
-      },
-      output as any
-    )
-
-    expect(manualRefresh).toHaveBeenCalledTimes(1)
-    expect(output.parts[0].text).toContain('handled by the nim-sync plugin')
+    expect(hooks['command.execute.before']).toBeUndefined()
+    expect(manualRefresh).not.toHaveBeenCalled()
   })
 })

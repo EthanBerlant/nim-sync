@@ -8,7 +8,7 @@ A global OpenCode plugin that automatically synchronizes NVIDIA NIM models with 
 - **Config Management**: Updates `provider.nim.models` in your OpenCode config
 - **TTL Cache**: Only refreshes models if last refresh was >24 hours ago
 - **Manual Refresh**: `/nim-refresh` command for force updates
-- **Slash Autocomplete**: Manages `command.nim-refresh` so `/nim-refresh` appears in OpenCode command suggestions
+- **Native Slash Handling**: Registers `/nim-refresh` directly in the OpenCode TUI/Desktop prompt flow without sending a prompt to the model
 - **Atomic Operations**: Safe file writes with backups and locking
 - **Error Handling**: Graceful fallback when offline or missing API key
 
@@ -20,7 +20,7 @@ The simplest install path is OpenCode's built-in plugin installer:
 opencode plugin nim-sync -g
 ```
 
-That is the supported path. It installs both the server and TUI plugin targets into your global OpenCode config, so background sync is available immediately and the plugin can keep `command.nim-refresh` available for desktop and TUI command discovery.
+That is the supported path. It installs both the server and TUI plugin targets into your global OpenCode config, so background sync is available immediately and `/nim-refresh` is handled locally by the plugin in both desktop and TUI sessions.
 
 You can also install through the Plugins dialog in OpenCode.
 
@@ -30,8 +30,8 @@ Ensure you have an NVIDIA API key either:
    - Set `NVIDIA_API_KEY` environment variable
    - Run `/connect` in OpenCode to add NVIDIA credentials
 
-On startup, the server plugin refreshes the NVIDIA model catalog in the background and manages `command.nim-refresh` in your OpenCode config.
-The TUI plugin additionally registers `/nim-refresh` for TUI autocomplete.
+On startup, the server plugin refreshes the NVIDIA model catalog in the background.
+The TUI plugin registers `/nim-refresh` directly with OpenCode's prompt UI so the command appears in slash suggestions and runs without consuming LLM quota.
 
 ## Configuration
 
@@ -63,7 +63,6 @@ The plugin ONLY manages:
 - `provider.nim.name`
 - `provider.nim.options.baseURL`
 - `provider.nim.models`
-- `command.nim-refresh`
 
 You retain control over:
 - Top-level `model` selection
@@ -193,8 +192,8 @@ scripts/
 ```
 
 ### Key Components
-- **Server Plugin**: Runs background refresh, keeps `command.nim-refresh` synced, and handles manual execution
-- **TUI Plugin**: Registers `/nim-refresh` for TUI autocomplete
+- **Server Plugin**: Runs background refresh in response to OpenCode lifecycle events
+- **TUI Plugin**: Registers `/nim-refresh` in the prompt UI and intercepts submit locally
 - **Shared Sync Service**: Holds the API, cache, and config update logic
 - **Credential Resolution**: Checks `/connect` auth or env var
 - **NVIDIA API Client**: Fetches `/v1/models` endpoint

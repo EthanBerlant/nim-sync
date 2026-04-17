@@ -232,13 +232,6 @@ describe('User Journey: NVIDIA NIM Model Synchronization', () => {
       const modelId = 'meta/llama-3.1-70b-instruct'
       const modelName = 'Meta Llama 3.1 70B Instruct'
       const currentConfig = JSON.stringify({
-        command: {
-          'nim-refresh': {
-            description: 'Refresh NVIDIA NIM models',
-            template: 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.',
-            subtask: false
-          }
-        },
         provider: {
           nim: {
             npm: '@ai-sdk/openai-compatible',

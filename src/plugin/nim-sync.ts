@@ -19,7 +19,7 @@ export async function syncNIMModels(api: PluginAPI): Promise<{
   shouldRefresh?: () => Promise<boolean>
 }> {
   const safeShowToast = (options: { title: string; description: string; variant: 'success' | 'error' | 'default' }): void => {
-    try { api.tui.toast.show(options) } catch (e) { console.debug('[NIM-Sync] Toast display failed:', e instanceof Error ? e.message : 'Unknown') }
+    try { api.tui.toast.show(options) } catch { return }
   }
 
   const service = createNIMSyncService({

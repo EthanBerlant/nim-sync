@@ -16,12 +16,14 @@ import {
   CACHE_TTL_MS,
   MIN_MANUAL_REFRESH_INTERVAL_MS
 } from '../lib/file-utils.js'
+import {
+  NIM_REFRESH_COMMAND_DESCRIPTION,
+  NIM_REFRESH_COMMAND_NAME,
+  NIM_REFRESH_COMMAND_TEMPLATE
+} from './nim-refresh-command.js'
 
 const NIM_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 const CACHE_FILE_NAME = 'nim-sync-cache.json'
-const REFRESH_COMMAND_NAME = 'nim-refresh'
-const REFRESH_COMMAND_DESCRIPTION = 'Refresh NVIDIA NIM models'
-const REFRESH_COMMAND_TEMPLATE = 'The /nim-refresh command triggers the nim-sync plugin to refresh the NVIDIA NIM model catalog. After it runs, reply with a short confirmation only.'
 
 const ALLOWED_MODEL_PROPERTIES = new Set([
   'id', 'name', 'description', 'model_type', 'quantization',
@@ -29,6 +31,7 @@ const ALLOWED_MODEL_PROPERTIES = new Set([
 ])
 
 type RefreshSource = 'background' | 'manual'
+type RefreshResult = 'attempted' | 'blocked-in-progress' | 'blocked-missing-api-key' | 'skipped'
 type RefreshCommandConfig = NonNullable<OpenCodeConfig['command']>[string]
 
 export interface NIMSyncToast {
@@ -88,11 +91,57 @@ const managedRefreshCommandMatches = (
   return JSON.stringify(sortKeysDeep(currentConfig ?? null)) === JSON.stringify(sortKeysDeep(nextConfig))
 }
 
-const buildManagedRefreshCommand = (): NonNullable<OpenCodeConfig['command']>[typeof REFRESH_COMMAND_NAME] => ({
-  description: REFRESH_COMMAND_DESCRIPTION,
-  template: REFRESH_COMMAND_TEMPLATE,
+const buildManagedRefreshCommand = (): NonNullable<OpenCodeConfig['command']>[typeof NIM_REFRESH_COMMAND_NAME] => ({
+  description: NIM_REFRESH_COMMAND_DESCRIPTION,
+  template: NIM_REFRESH_COMMAND_TEMPLATE,
   subtask: false
 })
+
+const getManagedRefreshCommandCleanup = (config: OpenCodeConfig): {
+  removed: boolean
+  command: OpenCodeConfig['command'] | undefined
+  updates: Array<{
+    jsonPath: Array<string | number>
+    data: unknown
+  }>
+} => {
+  const managedRefreshCommand = buildManagedRefreshCommand()
+  const currentRefreshCommand = config.command?.[NIM_REFRESH_COMMAND_NAME]
+
+  if (!managedRefreshCommandMatches(currentRefreshCommand, managedRefreshCommand)) {
+    return {
+      removed: false,
+      command: config.command,
+      updates: []
+    }
+  }
+
+  const nextCommand = {
+    ...(config.command ?? {})
+  }
+
+  delete nextCommand[NIM_REFRESH_COMMAND_NAME]
+
+  const updates = [
+    {
+      jsonPath: ['command', NIM_REFRESH_COMMAND_NAME] as Array<string | number>,
+      data: undefined
+    }
+  ]
+
+  if (Object.keys(nextCommand).length === 0) {
+    updates.push({
+      jsonPath: ['command'],
+      data: undefined
+    })
+  }
+
+  return {
+    removed: true,
+    command: Object.keys(nextCommand).length > 0 ? nextCommand : undefined,
+    updates
+  }
+}
 
 function validateAPIResponse(response: unknown): NIMModel[] {
   if (!response || typeof response !== 'object') throw new Error('Invalid API response: Expected object, got ' + (response === null ? 'null' : typeof response))
@@ -164,9 +213,7 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
   let lastManualRefresh = 0
 
   const showToast = (toast: NIMSyncToast): void => {
-    void Promise.resolve(options.showToast?.(toast)).catch((error) => {
-      console.debug('[NIM-Sync] Toast display failed:', error instanceof Error ? error.message : 'Unknown')
-    })
+    void Promise.resolve(options.showToast?.(toast)).catch(() => {})
   }
 
   const sanitizeErrorMessage = (msg: string, apiKey: string | null): string => {
@@ -200,13 +247,11 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
     try {
       const auth = await readJSONC<AuthConfig>(getAuthPath())
       if (!auth || Object.keys(auth).length === 0) {
-        console.debug('[NIM-Sync] No auth.json found, checking env var')
         return process.env.NVIDIA_API_KEY || null
       }
       if (auth.credentials?.nim?.apiKey && typeof auth.credentials.nim.apiKey === 'string') {
         return auth.credentials.nim.apiKey
       }
-      console.debug('[NIM-Sync] No credentials in auth.json, checking env var')
       return process.env.NVIDIA_API_KEY || null
     } catch (error) {
       console.error('[NIM-Sync] Failed to read auth:', error instanceof Error ? error.message : 'Unknown error')
@@ -266,32 +311,33 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
     }
   }
 
-  const ensureRefreshCommand = async (): Promise<boolean> => {
+  const removeManagedRefreshCommand = async (): Promise<boolean> => {
     const configPath = await getConfigFilePath()
     const config = await readJSONC<OpenCodeConfig>(configPath)
-    const updatedRefreshCommand = buildManagedRefreshCommand()
+    const cleanup = getManagedRefreshCommandCleanup(config || {})
 
-    if (!managedRefreshCommandMatches(config?.command?.[REFRESH_COMMAND_NAME], updatedRefreshCommand)) {
-      const updatedConfig: OpenCodeConfig = {
-        ...(config || {}),
-        command: {
-          ...config?.command,
-          [REFRESH_COMMAND_NAME]: updatedRefreshCommand
-        }
-      }
-
-      await persistManagedConfigUpdates(
-        configPath,
-        updatedConfig,
-        [
-          { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }
-        ],
-        { validate: false }
-      )
-      return true
+    if (!cleanup.removed) {
+      return false
     }
 
-    return false
+    const updatedConfig: OpenCodeConfig = {
+      ...(config || {})
+    }
+
+    if (cleanup.command) {
+      updatedConfig.command = cleanup.command
+    } else {
+      delete updatedConfig.command
+    }
+
+    await persistManagedConfigUpdates(
+      configPath,
+      updatedConfig,
+      cleanup.updates,
+      { validate: false }
+    )
+
+    return true
   }
 
   const updateConfig = async (models: NIMModel[]): Promise<boolean> => {
@@ -304,6 +350,7 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
     }, {} as Record<string, { name: string; options: Record<string, unknown> }>)
     const modelsHash = hashModels(models)
     const cache = await readCache()
+    const refreshCommandCleanup = getManagedRefreshCommandCleanup(config || {})
 
     const updatedNIMConfig: NonNullable<OpenCodeConfig['provider']>['nim'] = {
       ...config?.provider?.nim,
@@ -315,12 +362,8 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       },
       models: newModels
     }
-    const updatedRefreshCommand = buildManagedRefreshCommand()
     const managedConfigChanged = !managedNIMConfigMatches(config?.provider?.nim, updatedNIMConfig)
-    const managedCommandChanged = !managedRefreshCommandMatches(
-      config?.command?.[REFRESH_COMMAND_NAME],
-      updatedRefreshCommand
-    )
+    const managedCommandChanged = refreshCommandCleanup.removed
 
     if (cache?.modelsHash === modelsHash && !managedConfigChanged && !managedCommandChanged) {
       try {
@@ -331,11 +374,13 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
 
     const updatedConfig: OpenCodeConfig = {
       ...(config || {}),
-      command: {
-        ...config?.command,
-        [REFRESH_COMMAND_NAME]: updatedRefreshCommand
-      },
       provider: { ...config?.provider, nim: updatedNIMConfig }
+    }
+
+    if (refreshCommandCleanup.command) {
+      updatedConfig.command = refreshCommandCleanup.command
+    } else {
+      delete updatedConfig.command
     }
 
     await persistManagedConfigUpdates(
@@ -343,14 +388,14 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       updatedConfig,
       [
         { jsonPath: ['provider', 'nim'], data: updatedNIMConfig },
-        { jsonPath: ['command', REFRESH_COMMAND_NAME], data: updatedRefreshCommand }
+        ...refreshCommandCleanup.updates
       ]
     )
     try { await writeCache({ lastRefresh: Date.now(), modelsHash, baseURL: NIM_BASE_URL }) } catch { /* non-fatal */ }
     return true
   }
 
-  const runRefreshModels = async (force = false, source: RefreshSource = 'background'): Promise<void> => {
+  const runRefreshModels = async (force = false, source: RefreshSource = 'background'): Promise<RefreshResult> => {
     if (refreshInProgress) {
       if (source === 'manual') {
         showToast({
@@ -359,22 +404,22 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
           variant: 'info'
         })
       }
-      return
+      return 'blocked-in-progress'
     }
     refreshInProgress = true
     let apiKey: string | null = null
     try {
-      await ensureRefreshCommand()
-      if (!force && !(await shouldRefresh())) return
+      await removeManagedRefreshCommand()
+      if (!force && !(await shouldRefresh())) return 'skipped'
       apiKey = await getAPIKey()
       if (!apiKey) {
         showToast({ title: 'NVIDIA API Key Required', message: 'Run /connect to add your NVIDIA API key', variant: 'error' })
-        return
+        return 'blocked-missing-api-key'
       }
       const models = await fetchModels(apiKey)
       if (models.length === 0) {
         showToast({ title: 'No Models Available', message: 'NVIDIA API returned no models.', variant: 'error' })
-        return
+        return 'attempted'
       }
       const changed = await updateConfig(models)
       if (changed) {
@@ -382,11 +427,13 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       } else if (source === 'manual') {
         showToast({ title: 'NVIDIA NIM Already Up To Date', message: 'No model changes found.', variant: 'info' })
       }
+      return 'attempted'
     } catch (error) {
       const msg = sanitizeErrorMessage(error instanceof Error ? error.message : 'Unknown error', apiKey)
       console.error('[NIM-Sync] Model refresh failed:', msg)
       showToast({ title: 'NVIDIA Sync Failed', message: msg, variant: 'error' })
       try { await writeCache({ modelsHash: '', lastError: msg, baseURL: NIM_BASE_URL }) } catch { /* ignore */ }
+      return 'attempted'
     } finally {
       refreshInProgress = false
     }
@@ -403,8 +450,10 @@ export function createNIMSyncService(options: NIMSyncServiceOptions = {}): NIMSy
       showToast({ title: 'Rate Limited', message: 'Please wait ' + remainingSeconds + 's before refreshing again', variant: 'info' })
       return
     }
-    lastManualRefresh = now
-    await runRefreshModels(true, 'manual')
+    const result = await runRefreshModels(true, 'manual')
+    if (result === 'attempted') {
+      lastManualRefresh = now
+    }
   }
 
   return {
