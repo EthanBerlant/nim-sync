@@ -1,6 +1,6 @@
 {
   "name": "nim-sync",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "OpenCode plugin to sync NVIDIA NIM models automatically",
   "main": "dist/server.mjs",
   "types": "dist/plugin/opencode-server.d.ts",
@@ -21,11 +21,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EthanBerlant/nim-sync.git"
+    "url": "git+https://github.com/OhOkThisIsFine/nim-sync.git"
   },
-  "homepage": "https://github.com/EthanBerlant/nim-sync#readme",
+  "homepage": "https://github.com/OhOkThisIsFine/nim-sync#readme",
   "bugs": {
-    "url": "https://github.com/EthanBerlant/nim-sync/issues"
+    "url": "https://github.com/OhOkThisIsFine/nim-sync/issues"
   },
   "files": [
     "dist",
