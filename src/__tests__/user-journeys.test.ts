@@ -1,544 +1,637 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import fs from 'fs/promises'
-import type { PluginAPI } from '../types/index.js'
-import { syncNIMModels } from '../plugin/nim-sync.js'
-import { createMockPluginAPI } from './mocks.js'
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import fs from "fs/promises";
+import type { PluginAPI } from "../types/index.js";
+import { syncNIMModels } from "../plugin/nim-sync.js";
+import { createMockPluginAPI } from "./mocks.js";
 
-vi.mock('fs/promises')
-vi.mock('../lib/retry.js', () => ({
-  withRetry: vi.fn().mockImplementation(async (fn) => fn())
-}))
-vi.mock('crypto', () => {
+vi.mock("fs/promises");
+vi.mock("../lib/retry.js", () => ({
+  withRetry: vi.fn().mockImplementation(async (fn) => fn()),
+}));
+vi.mock("crypto", () => {
   const createHash = () => ({
     update: vi.fn().mockReturnThis(),
-    digest: vi.fn((_encoding: string) => 'test-hash-value')
-  })
+    digest: vi.fn((_encoding: string) => "test-hash-value"),
+  });
   return {
     default: { createHash },
-    createHash
-  }
-})
+    createHash,
+  };
+});
 
 const flushAsyncWork = async (cycles = 5): Promise<void> => {
   for (let i = 0; i < cycles; i++) {
-    await Promise.resolve()
-    await new Promise<void>(resolve => setImmediate(resolve))
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
-}
+};
 
-describe('User Journey: NVIDIA NIM Model Synchronization', () => {
-  let mockPluginAPI: PluginAPI
+describe("User Journey: NVIDIA NIM Model Synchronization", () => {
+  let mockPluginAPI: PluginAPI;
 
   beforeEach(() => {
-    vi.clearAllMocks()
-    mockPluginAPI = createMockPluginAPI()
+    vi.clearAllMocks();
+    mockPluginAPI = createMockPluginAPI();
 
-    process.env.USERPROFILE = '/test/user'
-    process.env.NVIDIA_API_KEY = 'test-api-key'
+    process.env.USERPROFILE = "/test/user";
+    process.env.NVIDIA_API_KEY = "test-api-key";
 
     vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-      if (filePath.includes('auth.json')) {
-        return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+      if (filePath.includes("auth.json")) {
+        return Promise.reject(
+          Object.assign(new Error("File not found"), { code: "ENOENT" }),
+        );
       }
-      return Promise.resolve('{}')
-    })
-    vi.mocked(fs.writeFile).mockResolvedValue(undefined)
-    vi.mocked(fs.mkdir).mockResolvedValue(undefined)
+      return Promise.resolve("{}");
+    });
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
     vi.mocked(fs.open).mockResolvedValue({
       close: vi.fn(),
-      writeFile: vi.fn().mockResolvedValue(undefined)
-    } as any)
-    vi.mocked(fs.unlink).mockResolvedValue(undefined)
-    vi.mocked(fs.access).mockResolvedValue(undefined)
-    vi.mocked(fs.stat).mockResolvedValue({ mtimeMs: Date.now() } as any)
-  })
+      writeFile: vi.fn().mockResolvedValue(undefined),
+    } as any);
+    vi.mocked(fs.unlink).mockResolvedValue(undefined);
+    vi.mocked(fs.access).mockResolvedValue(undefined);
+    vi.mocked(fs.stat).mockResolvedValue({ mtimeMs: Date.now() } as any);
+  });
 
-  describe('As a user, I want NVIDIA NIM models to sync automatically on OpenCode startup', () => {
-    it('initializes plugin on startup and triggers refresh', async () => {
-      const plugin = await syncNIMModels(mockPluginAPI)
-      expect(plugin).toBeDefined()
-      expect(typeof plugin.init).toBe('function')
-    })
+  describe("As a user, I want NVIDIA NIM models to sync automatically on OpenCode startup", () => {
+    it("initializes plugin on startup and triggers refresh", async () => {
+      const plugin = await syncNIMModels(mockPluginAPI);
+      expect(plugin).toBeDefined();
+      expect(typeof plugin.init).toBe("function");
+    });
 
-    it('fetches models from NVIDIA /v1/models endpoint', async () => {
+    it("fetches models from NVIDIA /v1/models endpoint", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [
-            { id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' },
-            { id: 'mistralai/mistral-7b-instruct', name: 'Mistral 7B Instruct' }
-          ]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+              {
+                id: "mistralai/mistral-7b-instruct",
+                name: "Mistral 7B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://integrate.api.nvidia.com/v1/models',
+        "https://integrate.api.nvidia.com/v1/models",
         expect.objectContaining({
           headers: expect.objectContaining({
-            'Authorization': expect.stringContaining('Bearer ')
-          })
-        })
-      )
-    })
+            Authorization: expect.stringContaining("Bearer "),
+          }),
+        }),
+      );
+    });
 
-    it('updates OpenCode config with discovered models', async () => {
+    it("updates OpenCode config with discovered models", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [
-            { id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' },
-            { id: 'mistralai/mistral-7b-instruct', name: 'Mistral 7B Instruct' }
-          ]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+              {
+                id: "mistralai/mistral-7b-instruct",
+                name: "Mistral 7B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).toHaveBeenCalled()
-    })
+      expect(mockFetch).toHaveBeenCalled();
+    });
 
-    it('preserves user-owned settings like default model selection', async () => {
+    it("preserves user-owned settings like default model selection", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
       const existingConfig = JSON.stringify({
-        model: 'nim/meta/llama-3.1-70b-instruct',
-        small_model: 'nim/mistralai/mistral-7b-instruct',
+        model: "nim/meta/llama-3.1-70b-instruct",
+        small_model: "nim/mistralai/mistral-7b-instruct",
         provider: {
           nim: {
             models: {
-              'meta/llama-3.1-70b-instruct': {
-                name: 'Meta Llama 3.1 70B Instruct',
-                options: { max_tokens: 4096 }
-              }
-            }
-          }
-        }
-      })
+              "meta/llama-3.1-70b-instruct": {
+                name: "Meta Llama 3.1 70B Instruct",
+                options: { max_tokens: 4096 },
+              },
+            },
+          },
+        },
+      });
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
         }
-        return Promise.resolve(existingConfig)
-      })
+        return Promise.resolve(existingConfig);
+      });
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).toHaveBeenCalled()
-    })
+      expect(mockFetch).toHaveBeenCalled();
+    });
 
-    it('shows toast notification when models are updated', async () => {
+    it("shows toast notification when models are updated", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).toHaveBeenCalled()
-    })
-  })
+      expect(mockFetch).toHaveBeenCalled();
+    });
+  });
 
-  describe('As a user, I want graceful fallback when NVIDIA API is unavailable', () => {
-    it('keeps existing models when refresh fails', async () => {
-      const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
-      global.fetch = mockFetch
+  describe("As a user, I want graceful fallback when NVIDIA API is unavailable", () => {
+    it("keeps existing models when refresh fails", async () => {
+      const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"));
+      global.fetch = mockFetch;
 
-      vi.mocked(fs.readFile).mockResolvedValue('{}')
+      vi.mocked(fs.readFile).mockResolvedValue("{}");
 
-      await syncNIMModels(mockPluginAPI)
+      await syncNIMModels(mockPluginAPI);
 
-      expect(fs.writeFile).not.toHaveBeenCalled()
-    })
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
 
-    it('shows error toast when API key is missing', async () => {
-      delete process.env.NVIDIA_API_KEY
-      vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+    it("shows error toast when API key is missing", async () => {
+      delete process.env.NVIDIA_API_KEY;
+      vi.mocked(fs.readFile).mockRejectedValue(
+        Object.assign(new Error("File not found"), { code: "ENOENT" }),
+      );
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'NVIDIA API Key Required',
-          variant: 'error'
-        })
-      )
-    })
-  })
+          title: "NVIDIA API Key Required",
+          variant: "error",
+        }),
+      );
+    });
+  });
 
-  describe('As a user, I want manual refresh capability', () => {
-    it('exposes /nim-refresh command for manual refresh', async () => {
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
+  describe("As a user, I want manual refresh capability", () => {
+    it("exposes /nim-refresh command for manual refresh", async () => {
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
 
       expect(mockPluginAPI.command.register).toHaveBeenCalledWith(
-        'nim-refresh',
+        "nim-refresh",
         expect.any(Function),
         expect.objectContaining({
-          description: expect.stringContaining('NVIDIA')
-        })
-      )
-    })
+          description: expect.stringContaining("NVIDIA"),
+        }),
+      );
+    });
 
-    it('manual refresh command triggers model fetch', async () => {
+    it("manual refresh command triggers model fetch", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
-      let refreshHandler: () => Promise<void> = async () => {}
+      let refreshHandler: () => Promise<void> = async () => {};
       mockPluginAPI.command.register = vi.fn((name, handler) => {
-        if (name === 'nim-refresh') refreshHandler = handler as () => Promise<void>
-      }) as any
+        if (name === "nim-refresh")
+          refreshHandler = handler as () => Promise<void>;
+      }) as any;
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await vi.waitFor(() => expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(1))
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await vi.waitFor(() =>
+        expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(1),
+      );
+      await flushAsyncWork();
 
-      vi.clearAllMocks()
-      await refreshHandler()
+      vi.clearAllMocks();
+      await refreshHandler();
 
-      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
-    }, 10000)
+      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+    }, 10000);
 
-    it('manual refresh shows feedback when models are already up to date', async () => {
-      const modelId = 'meta/llama-3.1-70b-instruct'
-      const modelName = 'Meta Llama 3.1 70B Instruct'
+    it("manual refresh shows feedback when models are already up to date", async () => {
+      const modelId = "meta/llama-3.1-70b-instruct";
+      const modelName = "Meta Llama 3.1 70B Instruct";
       const currentConfig = JSON.stringify({
         provider: {
           nim: {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'NVIDIA NIM',
-            options: { baseURL: 'https://integrate.api.nvidia.com/v1' },
+            npm: "@ai-sdk/openai-compatible",
+            name: "NVIDIA NIM",
+            options: { baseURL: "https://integrate.api.nvidia.com/v1" },
             models: {
-              [modelId]: { name: modelName, options: {} }
-            }
-          }
-        }
-      })
+              [modelId]: { name: modelName, options: {} },
+            },
+          },
+        },
+      });
       const currentCache = JSON.stringify({
         lastRefresh: Date.now() - 60_000,
-        modelsHash: 'test-hash-value',
-        baseURL: 'https://integrate.api.nvidia.com/v1'
-      })
+        modelsHash: "test-hash-value",
+        baseURL: "https://integrate.api.nvidia.com/v1",
+      });
 
       mockPluginAPI.config.get = vi.fn(() => ({
         provider: {
           nim: {
             models: {
-              [modelId]: { name: modelName, options: {} }
-            }
-          }
-        }
-      })) as any
+              [modelId]: { name: modelName, options: {} },
+            },
+          },
+        },
+      })) as any;
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
         }
-        if (filePath.includes('nim-sync-cache.json')) {
-          return Promise.resolve(currentCache)
+        if (filePath.includes("nim-sync-cache.json")) {
+          return Promise.resolve(currentCache);
         }
-        return Promise.resolve(currentConfig)
-      })
+        return Promise.resolve(currentConfig);
+      });
 
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: modelId, name: modelName }]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [{ id: modelId, name: modelName }],
+          }),
+      });
+      global.fetch = mockFetch;
 
-      let refreshHandler: () => Promise<void> = async () => {}
+      let refreshHandler: () => Promise<void> = async () => {};
       mockPluginAPI.command.register = vi.fn((name, handler) => {
-        if (name === 'nim-refresh') refreshHandler = handler as () => Promise<void>
-      }) as any
+        if (name === "nim-refresh")
+          refreshHandler = handler as () => Promise<void>;
+      }) as any;
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).not.toHaveBeenCalled()
+      expect(mockFetch).not.toHaveBeenCalled();
 
-      await refreshHandler()
+      await refreshHandler();
 
-      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'NVIDIA NIM Already Up To Date',
-          description: 'No model changes found.',
-          variant: 'default'
-        })
-      )
-    })
+          title: "NVIDIA NIM Already Up To Date",
+          description: "No model changes found.",
+          variant: "default",
+        }),
+      );
+    });
 
-    it('manual refresh shows feedback when a refresh is already in progress', async () => {
-      const modelId = 'meta/llama-3.1-70b-instruct'
-      const modelName = 'Meta Llama 3.1 70B Instruct'
+    it("manual refresh shows feedback when a refresh is already in progress", async () => {
+      const modelId = "meta/llama-3.1-70b-instruct";
+      const modelName = "Meta Llama 3.1 70B Instruct";
       const currentConfig = JSON.stringify({
         provider: {
           nim: {
             models: {
-              [modelId]: { name: modelName, options: {} }
-            }
-          }
-        }
-      })
+              [modelId]: { name: modelName, options: {} },
+            },
+          },
+        },
+      });
       const currentCache = JSON.stringify({
         lastRefresh: Date.now() - 60_000,
-        modelsHash: 'old-hash-value',
-        baseURL: 'https://integrate.api.nvidia.com/v1'
-      })
+        modelsHash: "old-hash-value",
+        baseURL: "https://integrate.api.nvidia.com/v1",
+      });
 
       mockPluginAPI.config.get = vi.fn(() => ({
         provider: {
           nim: {
             models: {
-              [modelId]: { name: modelName, options: {} }
-            }
-          }
-        }
-      })) as any
+              [modelId]: { name: modelName, options: {} },
+            },
+          },
+        },
+      })) as any;
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
         }
-        if (filePath.includes('nim-sync-cache.json')) {
-          return Promise.resolve(currentCache)
+        if (filePath.includes("nim-sync-cache.json")) {
+          return Promise.resolve(currentCache);
         }
-        return Promise.resolve(currentConfig)
-      })
+        return Promise.resolve(currentConfig);
+      });
 
-      let resolveFetch: ((value: unknown) => void) | null = null
+      let resolveFetch: ((value: unknown) => void) | null = null;
       const mockFetch = vi.fn().mockImplementation(
-        () => new Promise(resolve => {
-          resolveFetch = resolve
-        })
-      )
-      global.fetch = mockFetch as any
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = resolve;
+          }),
+      );
+      global.fetch = mockFetch as any;
 
-      let refreshHandler: () => Promise<void> = async () => {}
+      let refreshHandler: () => Promise<void> = async () => {};
       mockPluginAPI.command.register = vi.fn((name, handler) => {
-        if (name === 'nim-refresh') refreshHandler = handler as () => Promise<void>
-      }) as any
+        if (name === "nim-refresh")
+          refreshHandler = handler as () => Promise<void>;
+      }) as any;
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      const inFlightRefresh = plugin.refreshModels?.(true)
-      await flushAsyncWork()
+      const inFlightRefresh = plugin.refreshModels?.(true);
+      await flushAsyncWork();
 
-      await refreshHandler()
+      await refreshHandler();
 
       expect(mockPluginAPI.tui.toast.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'NVIDIA Refresh In Progress',
-          description: 'A model refresh is already running.',
-          variant: 'default'
-        })
-      )
+          title: "NVIDIA Refresh In Progress",
+          description: "A model refresh is already running.",
+          variant: "default",
+        }),
+      );
 
       resolveFetch?.({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: modelId, name: modelName }]
-        })
-      })
+        json: () =>
+          Promise.resolve({
+            data: [{ id: modelId, name: modelName }],
+          }),
+      });
 
-      await inFlightRefresh
-    })
-  })
+      await inFlightRefresh;
+    });
+  });
 
-  describe('As a user, I want TTL-based refresh to avoid excessive API calls', () => {
-    it('skips refresh if last refresh was within 24 hours', async () => {
-      const mockFetch = vi.fn()
-      global.fetch = mockFetch
+  describe("As a user, I want TTL-based refresh to avoid excessive API calls", () => {
+    it("skips refresh if last refresh was within 24 hours", async () => {
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
 
       const recentCache = JSON.stringify({
         lastRefresh: Date.now() - 1000 * 60 * 60,
-        modelsHash: 'test-hash-value'
-      })
+        modelsHash: "test-hash-value",
+      });
 
       const configWithNIM = JSON.stringify({
-        provider: { nim: { models: { 'existing-model': { name: 'Existing Model' } } } }
-      })
+        provider: {
+          nim: { models: { "existing-model": { name: "Existing Model" } } },
+        },
+      });
 
       mockPluginAPI.config.get = vi.fn(() => ({
-        provider: { nim: { models: { 'existing-model': { name: 'Existing Model' } } } }
-      })) as any
+        provider: {
+          nim: { models: { "existing-model": { name: "Existing Model" } } },
+        },
+      })) as any;
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
         }
-        if (filePath.includes('nim-sync-cache.json')) {
-          return Promise.resolve(recentCache)
+        if (filePath.includes("nim-sync-cache.json")) {
+          return Promise.resolve(recentCache);
         }
-        return Promise.resolve(configWithNIM)
-      })
+        return Promise.resolve(configWithNIM);
+      });
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
 
-    it('forces refresh when models have changed even within TTL', async () => {
+    it("forces refresh when models have changed even within TTL", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
-        })
-      })
-      global.fetch = mockFetch
-
-      const configWithNIM = JSON.stringify({ provider: { nim: { models: {} } } })
-
-      mockPluginAPI.config.get = vi.fn(() => ({ provider: { nim: { models: {} } } })) as any
-
-      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
-        }
-        return Promise.resolve(configWithNIM)
-      })
-
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
-
-      expect(mockFetch).toHaveBeenCalled()
-    })
-
-    it('triggers refresh when cache TTL has expired', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
-        })
-      })
-      global.fetch = mockFetch
-
-      const expiredCache = JSON.stringify({
-        lastRefresh: Date.now() - 25 * 60 * 60 * 1000,
-        modelsHash: 'abc123'
-      })
-
-      const configWithNIM = JSON.stringify({ provider: { nim: { models: {} } } })
-
-      mockPluginAPI.config.get = vi.fn(() => ({ provider: { nim: { models: {} } } })) as any
-
-      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
-        }
-        if (filePath.includes('cache')) {
-          return Promise.resolve(expiredCache)
-        }
-        return Promise.resolve(configWithNIM)
-      })
-
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
-
-      expect(mockFetch).toHaveBeenCalled()
-    })
-
-    it('generates different hashes for different model sets', async () => {
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ data: [{ id: 'model-a', name: 'Model A' }] })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
+        json: () =>
+          Promise.resolve({
             data: [
-              { id: 'model-a', name: 'Model A' },
-              { id: 'model-b', name: 'Model B' }
-            ]
-          })
-        })
-      global.fetch = mockFetch
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
+
+      const configWithNIM = JSON.stringify({
+        provider: { nim: { models: {} } },
+      });
+
+      mockPluginAPI.config.get = vi.fn(() => ({
+        provider: { nim: { models: {} } },
+      })) as any;
+
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
+        }
+        return Promise.resolve(configWithNIM);
+      });
+
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
+
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("triggers refresh when cache TTL has expired", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
       const expiredCache = JSON.stringify({
         lastRefresh: Date.now() - 25 * 60 * 60 * 1000,
-        modelsHash: 'old-hash-value'
-      })
+        modelsHash: "abc123",
+      });
+
+      const configWithNIM = JSON.stringify({
+        provider: { nim: { models: {} } },
+      });
+
+      mockPluginAPI.config.get = vi.fn(() => ({
+        provider: { nim: { models: {} } },
+      })) as any;
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
         }
-        return Promise.resolve(expiredCache)
-      })
+        if (filePath.includes("cache")) {
+          return Promise.resolve(expiredCache);
+        }
+        return Promise.resolve(configWithNIM);
+      });
 
-      const plugin1 = await syncNIMModels(mockPluginAPI)
-      await plugin1.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(mockFetch).toHaveBeenCalled();
+    });
 
-      const plugin2 = await syncNIMModels(mockPluginAPI)
-      await plugin2.init?.()
-      await flushAsyncWork()
+    it("generates different hashes for different model sets", async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ data: [{ id: "model-a", name: "Model A" }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: [
+                { id: "model-a", name: "Model A" },
+                { id: "model-b", name: "Model B" },
+              ],
+            }),
+        });
+      global.fetch = mockFetch;
 
-      expect(mockFetch).toHaveBeenCalledTimes(2)
-    })
+      const expiredCache = JSON.stringify({
+        lastRefresh: Date.now() - 25 * 60 * 60 * 1000,
+        modelsHash: "old-hash-value",
+      });
 
-    it('forces refresh when provider.nim is missing', async () => {
+      vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
+        }
+        return Promise.resolve(expiredCache);
+      });
+
+      const plugin1 = await syncNIMModels(mockPluginAPI);
+      await plugin1.init?.();
+      await flushAsyncWork();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      const plugin2 = await syncNIMModels(mockPluginAPI);
+      await plugin2.init?.();
+      await flushAsyncWork();
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("forces refresh when provider.nim is missing", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({
-          data: [{ id: 'meta/llama-3.1-70b-instruct', name: 'Meta Llama 3.1 70B Instruct' }]
-        })
-      })
-      global.fetch = mockFetch
+        json: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "meta/llama-3.1-70b-instruct",
+                name: "Meta Llama 3.1 70B Instruct",
+              },
+            ],
+          }),
+      });
+      global.fetch = mockFetch;
 
       vi.mocked(fs.readFile).mockImplementation(async (filePath: string) => {
-        if (filePath.includes('auth.json')) {
-          return Promise.reject(Object.assign(new Error('File not found'), { code: 'ENOENT' }))
+        if (filePath.includes("auth.json")) {
+          return Promise.reject(
+            Object.assign(new Error("File not found"), { code: "ENOENT" }),
+          );
         }
-        return Promise.resolve('{}')
-      })
+        return Promise.resolve("{}");
+      });
 
-      const plugin = await syncNIMModels(mockPluginAPI)
-      await plugin.init?.()
-      await flushAsyncWork()
+      const plugin = await syncNIMModels(mockPluginAPI);
+      await plugin.init?.();
+      await flushAsyncWork();
 
-      expect(mockFetch).toHaveBeenCalled()
-    })
-  })
-})
+      expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+});

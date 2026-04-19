@@ -1,91 +1,110 @@
 export interface NIMModel {
-  id: string
-  name: string
-  description?: string
-  model_type?: string
-  quantization?: string
+  id: string;
+  name: string;
+  description?: string;
+  model_type?: string;
+  quantization?: string;
 }
 
 export interface NIMApiResponse {
-  data: NIMModel[]
+  data: NIMModel[];
 }
 
 export interface AuthConfig {
   credentials?: {
     nim?: {
-      apiKey?: string
-    }
-  }
+      apiKey?: string;
+    };
+  };
 }
 
 export interface LockMetadata {
-  pid: number
-  timestamp: number
+  pid: number;
+  timestamp: number;
 }
 
 export interface OpenCodeConfig {
-  $schema?: string
-  command?: Record<string, {
-    template: string
-    description?: string
-    agent?: string
-    model?: string
-    subtask?: boolean
-  }>
+  $schema?: string;
+  command?: Record<
+    string,
+    {
+      template: string;
+      description?: string;
+      agent?: string;
+      model?: string;
+      subtask?: boolean;
+    }
+  >;
   provider?: {
     nim?: {
-      npm?: string
-      name?: string
+      npm?: string;
+      name?: string;
       options?: {
-        baseURL?: string
-      }
-      models?: Record<string, { name: string; options?: Record<string, unknown> }>
-    }
-  }
-  model?: string
-  small_model?: string
-  [key: string]: unknown
+        baseURL?: string;
+      };
+      models?: Record<
+        string,
+        { name: string; options?: Record<string, unknown> }
+      >;
+    };
+  };
+  model?: string;
+  small_model?: string;
+  [key: string]: unknown;
 }
 
 export interface CacheData {
-  lastRefresh?: number
-  modelsHash: string
-  lastError?: string
-  baseURL?: string
+  lastRefresh?: number;
+  modelsHash: string;
+  lastError?: string;
+  baseURL?: string;
 }
 
 export interface PluginAPI {
   config: {
-    get: <T = unknown>(key?: string) => T
-    set: (key: string, value: unknown) => Promise<void>
-  }
+    get: <T = unknown>(key?: string) => T;
+    set: (key: string, value: unknown) => Promise<void>;
+  };
   tui: {
     toast: {
       show: (options: {
-        title: string
-        description?: string
-        variant?: 'default' | 'destructive' | 'success' | 'error'
-      }) => void
-    }
-  }
+        title: string;
+        description?: string;
+        variant?: "default" | "destructive" | "success" | "error";
+      }) => void;
+    };
+  };
   command: {
-    register: (name: string, handler: () => Promise<void> | void, options?: { description: string }) => void
-    execute: (name: string) => Promise<void>
-  }
+    register: (
+      name: string,
+      handler: () => Promise<void> | void,
+      options?: { description: string },
+    ) => void;
+    execute: (name: string) => Promise<void>;
+  };
   client?: {
     app: {
-      log: (log: { body: { service: string; level: 'debug' | 'info' | 'warn' | 'error'; message: string; extra?: Record<string, unknown> } }) => Promise<void>
-    }
-  }
+      log: (log: {
+        body: {
+          service: string;
+          level: "debug" | "info" | "warn" | "error";
+          message: string;
+          extra?: Record<string, unknown>;
+        };
+      }) => Promise<void>;
+    };
+  };
 }
 
-export type Plugin = (api: PluginAPI) => Promise<{
-  init?: () => Promise<void>
-  [key: string]: unknown
-}> | {
-  init?: () => Promise<void>
-  [key: string]: unknown
-}
+export type Plugin = (api: PluginAPI) =>
+  | Promise<{
+      init?: () => Promise<void>;
+      [key: string]: unknown;
+    }>
+  | {
+      init?: () => Promise<void>;
+      [key: string]: unknown;
+    };
 
 /**
  * Custom error for NVIDIA API failures.
@@ -93,10 +112,10 @@ export type Plugin = (api: PluginAPI) => Promise<{
 export class NVIDIAApiError extends Error {
   constructor(
     public statusCode: number,
-    public statusText: string
+    public statusText: string,
   ) {
-    super(`NVIDIA API error: ${statusCode} ${statusText}`)
-    this.name = 'NVIDIAApiError'
+    super(`NVIDIA API error: ${statusCode} ${statusText}`);
+    this.name = "NVIDIAApiError";
   }
 }
 
@@ -104,7 +123,7 @@ export class NVIDIAApiError extends Error {
  * Platform-specific directory paths for OpenCode.
  */
 export interface PlatformPaths {
-  config: string
-  data: string
-  cache: string
+  config: string;
+  data: string;
+  cache: string;
 }

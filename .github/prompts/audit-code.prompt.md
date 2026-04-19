@@ -3,6 +3,7 @@ name: audit-code
 description: Autonomous local loop code auditing
 agent: agent
 ---
+
 # `/audit-code` Execution Directive
 
 **SYSTEM DIRECTIVE:** When the user enters `/audit-code` in the chat, you are to assume the role of an autonomous code auditor. You are no longer just a conversational assistant; you must use your local terminal and file-editing tools to act as the "LLM Thinking Worker" for the `auditor-lambda` framework.

@@ -27,8 +27,9 @@ You can also install through the Plugins dialog in OpenCode.
 You do not need to edit `opencode.json` manually when you use the installer. It updates your existing OpenCode config file (`opencode.json` or `opencode.jsonc`) for you.
 
 Ensure you have an NVIDIA API key either:
-   - Set `NVIDIA_API_KEY` environment variable
-   - Run `/connect` in OpenCode to add NVIDIA credentials
+
+- Set `NVIDIA_API_KEY` environment variable
+- Run `/connect` in OpenCode to add NVIDIA credentials
 
 On startup, the server plugin refreshes the NVIDIA model catalog in the background and schedules the next automatic refresh for when the cache becomes stale.
 The TUI plugin registers `/nim-refresh` directly with OpenCode's prompt UI so the command appears in slash suggestions and runs without consuming LLM quota.
@@ -59,12 +60,14 @@ The plugin manages this subtree in your OpenCode config:
 ## User Ownership
 
 The plugin ONLY manages:
+
 - `provider.nim.npm`
 - `provider.nim.name`
 - `provider.nim.options.baseURL`
 - `provider.nim.models`
 
 You retain control over:
+
 - Top-level `model` selection
 - `small_model` setting
 - Per-model option overrides
@@ -95,6 +98,7 @@ npm run lint
 ### Local Testing
 
 `npm run build` now produces:
+
 - `dist/server.mjs` for the OpenCode server runtime
 - `dist/tui.mjs` for the OpenCode TUI runtime
 
@@ -116,14 +120,15 @@ The publish workflow uses Node 24 because npm trusted publishing requires Node 2
 `nim-sync` is already published on npm and a GitHub Actions `Trusted Publisher` is already configured for this repository.
 
 Current trusted publisher settings:
-- Owner/user: `EthanBerlant`
+
+- Owner/user: `OhOkThisIsFine`
 - Repository: `nim-sync`
 - Workflow filename: `publish.yml`
 
 If you cloned the repository before the rename, update your local remote:
 
 ```bash
-git remote set-url origin https://github.com/EthanBerlant/nim-sync.git
+git remote set-url origin https://github.com/OhOkThisIsFine/nim-sync.git
 ```
 
 To verify the trusted publisher from the CLI:
@@ -133,8 +138,9 @@ npm trust list nim-sync
 ```
 
 If a GitHub Actions publish run fails with `E404`, check these two things first:
+
 - The workflow is using Node 22.14.0 or higher
-- The npm Trusted Publisher still exactly matches `EthanBerlant` / `nim-sync` / `publish.yml`
+- The npm Trusted Publisher still exactly matches `OhOkThisIsFine` / `nim-sync` / `publish.yml`
 
 ### Releasing a New Version
 
@@ -161,6 +167,7 @@ git push origin v1.0.1
 ### What the Workflow Does
 
 On every pushed `v*` tag, GitHub Actions:
+
 - Verifies the pushed tag matches `package.json`
 - Installs dependencies with `npm ci`
 - Runs the test suite
@@ -180,6 +187,7 @@ This project follows strict TDD principles:
 ## Architecture
 
 ### File Structure
+
 ```
 src/
 ├── plugin/nim-sync.ts       # Legacy test-facing wrapper for the shared sync service
@@ -196,6 +204,7 @@ scripts/
 ```
 
 ### Key Components
+
 - **Server Plugin**: Runs background refresh on lifecycle events and schedules the next stale-time refresh
 - **TUI Plugin**: Registers `/nim-refresh` in the prompt UI and intercepts submit locally
 - **Shared Sync Service**: Holds the API, cache, and config update logic

@@ -1,56 +1,63 @@
-import fs from 'fs/promises'
-import path from 'path'
-import { applyEdits, modify as modifyJSONC, parse as parseJSONC } from 'jsonc-parser/lib/esm/main.js'
-import type { LockMetadata, PlatformPaths } from '../types/index.js'
+import fs from "fs/promises";
+import path from "path";
+import {
+  applyEdits,
+  modify as modifyJSONC,
+  parse as parseJSONC,
+} from "jsonc-parser/lib/esm/main.js";
+import type { LockMetadata, PlatformPaths } from "../types/index.js";
 
 /**
  * Options for atomic file write operations.
  */
 export interface AtomicWriteOptions {
   /** Whether to create a backup before overwriting */
-  backup?: boolean
+  backup?: boolean;
   /** Whether to create backup directory if it doesn't exist */
-  createBackupDir?: boolean
+  createBackupDir?: boolean;
 }
 
 /**
  * Timeout for NVIDIA API requests in milliseconds.
  */
-export const API_TIMEOUT_MS = 30_000
+export const API_TIMEOUT_MS = 30_000;
 
 /**
  * Time-to-live for cached model data in milliseconds (24 hours).
  */
-export const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Threshold for considering a lock stale in milliseconds (5 minutes).
  */
-export const LOCK_STALE_THRESHOLD_MS = 5 * 60 * 1000
+export const LOCK_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
 /**
  * Interval between lock acquisition retry attempts in milliseconds.
  */
-export const LOCK_RETRY_INTERVAL_MS = 100
+export const LOCK_RETRY_INTERVAL_MS = 100;
 
 /**
  * Minimum interval between manual refresh operations in milliseconds (60 seconds).
  */
-export const MIN_MANUAL_REFRESH_INTERVAL_MS = 60_000
+export const MIN_MANUAL_REFRESH_INTERVAL_MS = 60_000;
 
 /**
  * Maximum number of backup files to retain.
  */
-export const MAX_BACKUPS = 5
+export const MAX_BACKUPS = 5;
 
 /**
  * OpenCode config file names in preference order.
  */
-export const OPENCODE_CONFIG_FILENAMES = ['opencode.json', 'opencode.jsonc'] as const
+export const OPENCODE_CONFIG_FILENAMES = [
+  "opencode.json",
+  "opencode.jsonc",
+] as const;
 
 /**
  * Reads and parses a JSONC (JSON with Comments) file.
- * 
+ *
  * @param filePath - Path to the JSONC file
  * @param validate - Optional validation function to ensure type safety
  * @returns Parsed content of type T, or empty object if file doesn't exist
@@ -58,36 +65,36 @@ export const OPENCODE_CONFIG_FILENAMES = ['opencode.json', 'opencode.jsonc'] as 
  */
 export async function readJSONC<T = unknown>(
   filePath: string,
-  validate?: (data: unknown) => data is T
+  validate?: (data: unknown) => data is T,
 ): Promise<T> {
   try {
-    const content = await fs.readFile(filePath, 'utf-8')
-    const errors: { error: number; offset: number; length: number }[] = []
-    const result = parseJSONC(content, errors)
+    const content = await fs.readFile(filePath, "utf-8");
+    const errors: { error: number; offset: number; length: number }[] = [];
+    const result = parseJSONC(content, errors);
 
     if (errors.length > 0) {
       const errorDetails = errors
-        .map(e => `Parse error code ${e.error} at offset ${e.offset}`)
-        .join('; ')
-      throw new Error(`JSONC parse errors in ${filePath}: ${errorDetails}`)
+        .map((e) => `Parse error code ${e.error} at offset ${e.offset}`)
+        .join("; ");
+      throw new Error(`JSONC parse errors in ${filePath}: ${errorDetails}`);
     }
 
     if (validate && !validate(result)) {
-      throw new Error(`Invalid data structure in ${filePath}`)
+      throw new Error(`Invalid data structure in ${filePath}`);
     }
 
-    return result as T
+    return result as T;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return {} as T
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {} as T;
     }
-    throw error
+    throw error;
   }
 }
 
 /**
  * Writes data to a JSONC file with atomic operations.
- * 
+ *
  * @param filePath - Path to write the file
  * @param data - Data to serialize as JSON
  * @param options - Optional backup and directory creation settings
@@ -95,10 +102,10 @@ export async function readJSONC<T = unknown>(
 export async function writeJSONC<T = unknown>(
   filePath: string,
   data: T,
-  options?: AtomicWriteOptions
+  options?: AtomicWriteOptions,
 ): Promise<void> {
-  const content = JSON.stringify(data, null, 2)
-  await atomicWrite(filePath, content, options)
+  const content = JSON.stringify(data, null, 2);
+  await atomicWrite(filePath, content, options);
 }
 
 /**
@@ -114,29 +121,29 @@ export async function updateJSONCPath<T = unknown>(
   filePath: string,
   jsonPath: Array<string | number>,
   data: T,
-  options?: AtomicWriteOptions
+  options?: AtomicWriteOptions,
 ): Promise<void> {
-  let existingContent = ''
+  let existingContent = "";
 
   try {
-    existingContent = await fs.readFile(filePath, 'utf-8')
+    existingContent = await fs.readFile(filePath, "utf-8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
     }
   }
 
-  const eol = existingContent.includes('\r\n') ? '\r\n' : '\n'
+  const eol = existingContent.includes("\r\n") ? "\r\n" : "\n";
   const edits = modifyJSONC(existingContent, jsonPath, data, {
     formattingOptions: {
       insertSpaces: true,
       tabSize: 2,
-      eol
-    }
-  })
-  const updatedContent = applyEdits(existingContent, edits)
+      eol,
+    },
+  });
+  const updatedContent = applyEdits(existingContent, edits);
 
-  await atomicWrite(filePath, updatedContent, options)
+  await atomicWrite(filePath, updatedContent, options);
 }
 
 /**
@@ -150,42 +157,42 @@ export async function updateJSONCPath<T = unknown>(
 export async function updateJSONCPaths(
   filePath: string,
   updates: Array<{
-    jsonPath: Array<string | number>
-    data: unknown
+    jsonPath: Array<string | number>;
+    data: unknown;
   }>,
-  options?: AtomicWriteOptions
+  options?: AtomicWriteOptions,
 ): Promise<void> {
-  let existingContent = ''
+  let existingContent = "";
 
   try {
-    existingContent = await fs.readFile(filePath, 'utf-8')
+    existingContent = await fs.readFile(filePath, "utf-8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
     }
   }
 
-  const eol = existingContent.includes('\r\n') ? '\r\n' : '\n'
-  let updatedContent = existingContent
+  const eol = existingContent.includes("\r\n") ? "\r\n" : "\n";
+  let updatedContent = existingContent;
 
   for (const update of updates) {
     const edits = modifyJSONC(updatedContent, update.jsonPath, update.data, {
       formattingOptions: {
         insertSpaces: true,
         tabSize: 2,
-        eol
-      }
-    })
-    updatedContent = applyEdits(updatedContent, edits)
+        eol,
+      },
+    });
+    updatedContent = applyEdits(updatedContent, edits);
   }
 
-  await atomicWrite(filePath, updatedContent, options)
+  await atomicWrite(filePath, updatedContent, options);
 }
 
 /**
  * Atomically writes content to a file using temp file + rename pattern.
  * Optionally creates backups before overwriting and cleans up old backups.
- * 
+ *
  * @param filePath - Path to write the file
  * @param content - String content to write
  * @param options - Optional backup and directory creation settings
@@ -193,58 +200,63 @@ export async function updateJSONCPaths(
 export async function atomicWrite(
   filePath: string,
   content: string,
-  options: AtomicWriteOptions = {}
+  options: AtomicWriteOptions = {},
 ): Promise<void> {
-  const dir = path.dirname(filePath)
-  const tempPath = `${filePath}.${Date.now()}.tmp`
+  const dir = path.dirname(filePath);
+  const tempPath = `${filePath}.${Date.now()}.tmp`;
 
   try {
-    await fs.mkdir(dir, { recursive: true })
+    await fs.mkdir(dir, { recursive: true });
 
     if (options.backup) {
       try {
-        await fs.access(filePath)
+        await fs.access(filePath);
 
-        const backupDir = path.join(dir, 'backups')
+        const backupDir = path.join(dir, "backups");
         if (options.createBackupDir) {
-          await fs.mkdir(backupDir, { recursive: true })
+          await fs.mkdir(backupDir, { recursive: true });
         }
 
-        const backupPath = path.join(backupDir, `${path.basename(filePath)}.${Date.now()}.bak`)
-        await fs.copyFile(filePath, backupPath)
-        
+        const backupPath = path.join(
+          backupDir,
+          `${path.basename(filePath)}.${Date.now()}.bak`,
+        );
+        await fs.copyFile(filePath, backupPath);
+
         // Clean up old backups after creating new one
-        await cleanupOldBackups(backupDir, path.basename(filePath))
+        await cleanupOldBackups(backupDir, path.basename(filePath));
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new Error(`Failed to create backup: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw new Error(
+            `Failed to create backup: ${error instanceof Error ? error.message : "Unknown error"}`,
+          );
         }
       }
     }
 
-    await fs.writeFile(tempPath, content, 'utf-8')
-    await fs.rename(tempPath, filePath)
+    await fs.writeFile(tempPath, content, "utf-8");
+    await fs.rename(tempPath, filePath);
   } catch (error) {
     try {
-      await fs.unlink(tempPath)
+      await fs.unlink(tempPath);
     } catch {
       // Ignore temp file cleanup failures
     }
-    throw error
+    throw error;
   }
 }
 
 /**
  * Ensures a directory exists, creating it recursively if needed.
- * 
+ *
  * @param dirPath - Path to the directory
  */
 export async function ensureDir(dirPath: string): Promise<void> {
   try {
-    await fs.mkdir(dirPath, { recursive: true })
+    await fs.mkdir(dirPath, { recursive: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      throw error
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw error;
     }
   }
 }
@@ -252,7 +264,7 @@ export async function ensureDir(dirPath: string): Promise<void> {
 /**
  * Returns platform-specific paths for config, data, and cache directories.
  * Uses the XDG-style directories OpenCode reports across supported platforms.
- * 
+ *
  * @returns Platform-specific directory paths
  * @example
  * ```typescript
@@ -262,43 +274,44 @@ export async function ensureDir(dirPath: string): Promise<void> {
  * ```
  */
 function getPlatformPaths(): PlatformPaths {
-  const home = process.env.HOME || process.env.USERPROFILE || ''
-  const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config')
-  const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share')
-  const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache')
-  
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
+  const dataHome =
+    process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
+  const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, ".cache");
+
   return {
-    config: path.join(configHome, 'opencode'),
-    data: path.join(dataHome, 'opencode'),
-    cache: path.join(cacheHome, 'opencode')
-  }
+    config: path.join(configHome, "opencode"),
+    data: path.join(dataHome, "opencode"),
+    cache: path.join(cacheHome, "opencode"),
+  };
 }
 
 /**
  * Returns the platform-specific config directory path.
- * 
+ *
  * @returns Config directory path
  */
 export function getConfigDir(): string {
-  return getPlatformPaths().config
+  return getPlatformPaths().config;
 }
 
 /**
  * Returns the platform-specific cache directory path.
- * 
+ *
  * @returns Cache directory path
  */
 export function getCacheDir(): string {
-  return getPlatformPaths().cache
+  return getPlatformPaths().cache;
 }
 
 /**
  * Returns the platform-specific data directory path.
- * 
+ *
  * @returns Data directory path
  */
 export function getDataDir(): string {
-  return getPlatformPaths().data
+  return getPlatformPaths().data;
 }
 
 /**
@@ -309,61 +322,64 @@ export function getDataDir(): string {
  * @returns Absolute path to the OpenCode config file
  */
 export async function getConfigFilePath(): Promise<string> {
-  const configDir = getConfigDir()
+  const configDir = getConfigDir();
 
   for (const fileName of OPENCODE_CONFIG_FILENAMES) {
-    const candidate = path.join(configDir, fileName)
+    const candidate = path.join(configDir, fileName);
     try {
-      await fs.access(candidate)
-      return candidate
+      await fs.access(candidate);
+      return candidate;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
       }
     }
   }
 
-  return path.join(configDir, OPENCODE_CONFIG_FILENAMES[0])
+  return path.join(configDir, OPENCODE_CONFIG_FILENAMES[0]);
 }
 
 /**
  * Checks if a process with the given PID is currently running.
  * Uses a non-destructive signal (0) to check process existence.
- * 
+ *
  * @param pid - Process ID to check
  * @returns true if the process exists, false otherwise
  */
 function isProcessRunning(pid: number): boolean {
   try {
     // Signal 0 doesn't kill the process, just checks if it exists
-    process.kill(pid, 0)
-    return true
+    process.kill(pid, 0);
+    return true;
   } catch {
-    return false
+    return false;
   }
 }
 
 /**
  * Cleans up old backup files, keeping only the most recent MAX_BACKUPS.
- * 
+ *
  * @param backupDir - Directory containing backup files
  * @param baseName - Base name of the file being backed up
  */
-async function cleanupOldBackups(backupDir: string, baseName: string): Promise<void> {
+async function cleanupOldBackups(
+  backupDir: string,
+  baseName: string,
+): Promise<void> {
   try {
-    const files = await fs.readdir(backupDir)
+    const files = await fs.readdir(backupDir);
     const backups = files
-      .filter(f => f.startsWith(baseName) && f.endsWith('.bak'))
-      .map(f => ({
+      .filter((f) => f.startsWith(baseName) && f.endsWith(".bak"))
+      .map((f) => ({
         name: f,
         // Extract timestamp from filename like "file.json.1234567890.bak"
-        timestamp: parseInt(f.split('.').slice(-2, -1)[0]) || 0
+        timestamp: parseInt(f.split(".").slice(-2, -1)[0]) || 0,
       }))
-      .sort((a, b) => b.timestamp - a.timestamp) // Sort newest first
-    
+      .sort((a, b) => b.timestamp - a.timestamp); // Sort newest first
+
     // Keep only the most recent backups
     for (const oldBackup of backups.slice(MAX_BACKUPS)) {
-      await fs.unlink(path.join(backupDir, oldBackup.name))
+      await fs.unlink(path.join(backupDir, oldBackup.name));
     }
   } catch {
     // Ignore cleanup failures - don't want to fail the main operation
@@ -373,65 +389,70 @@ async function cleanupOldBackups(backupDir: string, baseName: string): Promise<v
 /**
  * Acquires an exclusive lock for coordinating file operations.
  * Automatically cleans up stale locks from crashed processes.
- * 
+ *
  * @param lockName - Name of the lock
  * @param timeoutMs - Maximum time to wait for lock acquisition (default: 5000ms)
  * @returns Function to release the lock
  * @throws Error if lock cannot be acquired within timeout
  */
-export async function acquireLock(lockName: string, timeoutMs = 5000): Promise<() => Promise<void>> {
-  const lockDir = getCacheDir()
-  const lockPath = path.join(lockDir, `${lockName}.lock`)
+export async function acquireLock(
+  lockName: string,
+  timeoutMs = 5000,
+): Promise<() => Promise<void>> {
+  const lockDir = getCacheDir();
+  const lockPath = path.join(lockDir, `${lockName}.lock`);
 
-  await ensureDir(lockDir)
+  await ensureDir(lockDir);
 
   try {
-    const lockContent = await fs.readFile(lockPath, 'utf-8')
-    const metadata = JSON.parse(lockContent) as LockMetadata
-    const staleThreshold = Date.now() - LOCK_STALE_THRESHOLD_MS
-    
+    const lockContent = await fs.readFile(lockPath, "utf-8");
+    const metadata = JSON.parse(lockContent) as LockMetadata;
+    const staleThreshold = Date.now() - LOCK_STALE_THRESHOLD_MS;
+
     // Check if timestamp is stale OR if the holding process is no longer running
-    const isStale = metadata.timestamp < staleThreshold
-    const processExists = metadata.pid ? isProcessRunning(metadata.pid) : true
-    
+    const isStale = metadata.timestamp < staleThreshold;
+    const processExists = metadata.pid ? isProcessRunning(metadata.pid) : true;
+
     // Note: TOCTOU race possible between check and delete, but mitigated by
     // atomic 'wx' flag in subsequent fs.open() call which provides ultimate protection
     if (isStale || !processExists) {
-      await fs.unlink(lockPath)
+      await fs.unlink(lockPath);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('Failed to clean up stale lock')
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error("Failed to clean up stale lock");
     }
   }
 
-  const startTime = Date.now()
+  const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
     try {
-      const fd = await fs.open(lockPath, 'wx')
+      const fd = await fs.open(lockPath, "wx");
       const metadata: LockMetadata = {
         pid: process.pid,
-        timestamp: Date.now()
-      }
-      await fd.writeFile(JSON.stringify(metadata))
-      await fd.close()
+        timestamp: Date.now(),
+      };
+      await fd.writeFile(JSON.stringify(metadata));
+      await fd.close();
 
       return async () => {
         try {
-          await fs.unlink(lockPath)
+          await fs.unlink(lockPath);
         } catch {
           // Ignore unlock failures
         }
-      }
+      };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw error
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
       }
 
-      await new Promise(resolve => setTimeout(resolve, LOCK_RETRY_INTERVAL_MS))
+      await new Promise((resolve) =>
+        setTimeout(resolve, LOCK_RETRY_INTERVAL_MS),
+      );
     }
   }
 
-  throw new Error(`Failed to acquire lock "${lockName}" after ${timeoutMs}ms`)
+  throw new Error(`Failed to acquire lock "${lockName}" after ${timeoutMs}ms`);
 }
